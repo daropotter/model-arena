@@ -1,0 +1,10 @@
+{
+  "name": "smoke",
+  "title": "Prescreen smoke test: read a file, compute, write the answer",
+  "timeout": 900,
+  "protected": [
+    "numbers.txt",
+    "README.md"
+  ],
+  "difficulty": "basic"
+}

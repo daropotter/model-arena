@@ -1,0 +1,4 @@
+order_id,customer,amount,currency,date,status
+b2,Alice Smith,12.50,EUR,2026-01-05,paid
+a1,Bob,3.00,usd,2026-01-06,pending
+c3,Carol,7.25,EUR,2026-01-07,cancelled

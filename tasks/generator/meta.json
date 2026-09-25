@@ -1,0 +1,10 @@
+{
+  "name": "generator",
+  "title": "Reverse-engineer opaque generator, predict unseen outputs",
+  "timeout": 1800,
+  "protected": [
+    "SPEC.md",
+    "samples/"
+  ],
+  "difficulty": "hard"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "datajanitor",
+  "title": "Normalize messy CSV exports to spec + report",
+  "timeout": 1800,
+  "protected": [
+    "SPEC.md",
+    "data/",
+    "tests/"
+  ],
+  "difficulty": "hard"
+}

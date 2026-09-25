@@ -1,0 +1,9 @@
+{
+  "name": "sumtool",
+  "title": "Fix two obvious bugs in one small function (no spec to read)",
+  "timeout": 900,
+  "protected": [
+    "tests/"
+  ],
+  "difficulty": "easy"
+}

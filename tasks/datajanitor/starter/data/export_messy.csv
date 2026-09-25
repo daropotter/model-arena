@@ -1,0 +1,11 @@
+﻿order_id,customer,amount,currency,date,status
+ord-1,"Smith, Alice",$12.50,usd,01/05/2026,PAID
+ord-2,Bob  Jones,(45.00),eur,2026-01-06,Canceled
+ord-3,Carol,"1.234,50",gbr,"Jan 7, 2026",pend.
+
+order_id,customer,amount,currency,date,status
+ord-1,"Smith, Alice",12.50,USD,2026-01-05,paid
+ord-4,Dan,abc,USD,2026-01-08,paid
+ord-5,Eve,"1,234.00",USD,2026-13-01,paid
+ord-6,"Frank
+Foe",10,,2026-01-09,PENDING

@@ -1,0 +1,10 @@
+{
+  "name": "scheduler",
+  "title": "Single-machine scheduling with deadlines and dependencies",
+  "timeout": 1800,
+  "protected": [
+    "SPEC.md",
+    "tests/"
+  ],
+  "difficulty": "hard"
+}

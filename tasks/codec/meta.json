@@ -1,0 +1,10 @@
+{
+  "name": "codec",
+  "title": "Binary frame codec: magic, varint length, CRC32",
+  "timeout": 1800,
+  "protected": [
+    "SPEC.md",
+    "tests/"
+  ],
+  "difficulty": "hard"
+}

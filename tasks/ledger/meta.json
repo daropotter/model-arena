@@ -1,0 +1,11 @@
+{
+  "name": "ledger",
+  "title": "Repair ledger CLI against spec (hidden cases)",
+  "timeout": 1800,
+  "protected": [
+    "SPEC.md",
+    "tests/",
+    "README.md"
+  ],
+  "difficulty": "medium"
+}

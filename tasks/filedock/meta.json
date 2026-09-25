@@ -1,0 +1,10 @@
+{
+  "name": "filedock",
+  "title": "Organize inbox files by date, drop duplicates, write a manifest",
+  "timeout": 1800,
+  "protected": [
+    "README.md",
+    "tests/"
+  ],
+  "difficulty": "easy"
+}

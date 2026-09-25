@@ -1,0 +1,10 @@
+{
+  "name": "cronlog",
+  "title": "Make a file-backed CLI store concurrency-safe (locking + atomicity)",
+  "timeout": 1800,
+  "protected": [
+    "SPEC.md",
+    "tests/"
+  ],
+  "difficulty": "hard"
+}

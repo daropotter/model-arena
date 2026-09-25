@@ -1,0 +1,10 @@
+{
+  "name": "tasklog",
+  "title": "Cross-file feature + store migration (v1 -> v2)",
+  "timeout": 1800,
+  "protected": [
+    "SPEC.md",
+    "tests/"
+  ],
+  "difficulty": "medium"
+}
