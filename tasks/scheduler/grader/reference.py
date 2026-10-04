@@ -6,7 +6,9 @@ from itertools import permutations
 from pathlib import Path
 
 
-def validate(payload: dict) -> list:
+def validate(payload: dict) -> tuple:
+    if not isinstance(payload, dict):
+        raise ValueError("input must be an object")
     jobs = payload.get("jobs")
     if not isinstance(jobs, list) or not jobs:
         raise ValueError("jobs must be a non-empty list")
@@ -25,21 +27,24 @@ def validate(payload: dict) -> list:
         ids.append(jid)
         d = job.get("duration")
         dl = job.get("deadline")
-        if not isinstance(d, int) or d <= 0:
+        if type(d) is not int or d <= 0:
             raise ValueError(f"duration must be positive (job {jid})")
-        if not isinstance(dl, int) or dl <= 0:
+        if type(dl) is not int or dl <= 0:
             raise ValueError(f"deadline must be positive (job {jid})")
         dep = job.get("depends", [])
-        if not isinstance(dep, list):
+        if (not isinstance(dep, list)
+                or not all(isinstance(target, str) for target in dep)):
             raise ValueError(f"depends must be a list (job {jid})")
-        for target in dep:
-            if target not in ids:
-                raise ValueError(f"unknown dependency {target}")
-            if target == jid:
-                raise ValueError(f"job {jid} depends on itself")
         deps[jid] = list(dep)
         dur[jid] = d
         deadline[jid] = dl
+    known = set(ids)
+    for jid in ids:
+        for target in deps[jid]:
+            if target not in known:
+                raise ValueError(f"unknown dependency {target}")
+            if target == jid:
+                raise ValueError(f"job {jid} depends on itself")
     state = {jid: 0 for jid in ids}
 
     def dfs(jid):
@@ -68,13 +73,11 @@ def feasible(order, deps):
 
 
 def late_count(order, deps, dur, deadline):
-    finish = {}
+    elapsed = 0
     late = 0
     for jid in order:
-        start = max([0] + [finish[t] for t in deps[jid]])
-        end = start + dur[jid]
-        finish[jid] = end
-        if end > deadline[jid]:
+        elapsed += dur[jid]
+        if elapsed > deadline[jid]:
             late += 1
     return late
 

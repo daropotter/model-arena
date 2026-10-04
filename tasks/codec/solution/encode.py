@@ -28,6 +28,8 @@ def encode(in_path: Path, out_path: Path) -> None:
             or not isinstance(obj.get("text"), str):
         raise ValueError("input must be {\"text\": str}")
     payload = json.dumps(obj).encode("utf-8")
+    if len(payload) > 2 ** 32 - 1:
+        raise ValueError("payload too large")
     length = encode_varint(len(payload))
     crc = zlib.crc32(payload)
     out_path.write_bytes(MAGIC + length + payload + struct.pack("<I", crc))

@@ -1,0 +1,10 @@
+{
+  "name": "regex",
+  "title": "Pattern matcher: alternation, character classes, greedy backtracking",
+  "timeout": 1800,
+  "protected": [
+    "SPEC.md",
+    "tests/"
+  ],
+  "difficulty": "hard"
+}

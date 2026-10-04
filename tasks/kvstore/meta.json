@@ -1,0 +1,10 @@
+{
+  "name": "kvstore",
+  "title": "Crash-safe JSON key-value store: WAL, atomic batches, recovery",
+  "timeout": 1800,
+  "protected": [
+    "SPEC.md",
+    "tests/"
+  ],
+  "difficulty": "hard"
+}

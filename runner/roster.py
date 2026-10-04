@@ -7,7 +7,7 @@ applies evidence-based exclusion rules, and writes results/roster.md.
 Exclusion rules (in order):
   1. no-tool-support   - ollama rejects the model with tools at all
   2. tool-hallucinator - never emitted a real tool call in ANY run
-  3. too-big-for-hw    - never finished a single turn (all timeouts / 0 tokens)
+  3. too-big-for-hw    - repeated timeouts with no output on tested hardware
   4. ab-unfixable      - the tool-use instructions did not fix rule 2 or 3
 
 Usage: python3 runner/roster.py [--results DIR] [--ab DIR]
@@ -15,42 +15,31 @@ Usage: python3 runner/roster.py [--results DIR] [--ab DIR]
 
 import argparse
 import json
+import statistics
 from pathlib import Path
+
+import reporting
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def load(results: Path):
-    """Latest run per (model, task); `smoke` is a prescreen artifact."""
-    latest = {}
-    if not results.exists():
-        return []
-    for path in sorted(results.glob("*/record.json")):
-        try:
-            record = json.loads(path.read_text())
-        except json.JSONDecodeError:
-            continue
-        if record.get("task") == "smoke":
-            continue  # prescreen artifact, not a scored competition task
-        key = (record["model"], record["task"])
-        finished = record.get("finished_at") or ""
-        if key not in latest or finished > (latest[key].get("finished_at") or ""):
-            latest[key] = record
-    return list(latest.values())
+    """Latest valid run per (model, task); smoke is a prescreen artifact."""
+    return reporting.load_records([results])
 
 
 def task_difficulty(tasks_dir: Path, task: str) -> str:
     """Difficulty tier from the task's meta.json (basic/easy/medium/hard)."""
     meta_file = tasks_dir / task / "meta.json"
     try:
-        return json.loads(meta_file.read_text()).get("difficulty", "?")
-    except (OSError, json.JSONDecodeError):
+        meta = json.loads(meta_file.read_text())
+        return meta.get("difficulty", "?") if isinstance(meta, dict) else "?"
+    except (OSError, UnicodeError, json.JSONDecodeError):
         return "?"
 
 
 def has_unsupported(records):
-    from analyze import is_unsupported
-    return any(is_unsupported(r) for r in records)
+    return any(reporting.error_category(r) == "PROVIDER_ERROR" for r in records)
 
 
 def weird_filenames(rec):
@@ -66,32 +55,40 @@ def weird_filenames(rec):
 
 def summarize(records):
     from analyze import status_of
+    valid = reporting.quality_records(records)
     n = len(records)
-    acted = sum(1 for r in records if r["tool_calls"] > 0)
-    passed = sum(1 for r in records if r["passed"])
-    timeouts = sum(1 for r in records if r["timed_out"])
-    zero_token = sum(1 for r in records
+    acted = sum(1 for r in valid if r["tool_calls"] > 0)
+    passed = sum(1 for r in valid if status_of(r) == "PASS")
+    timeouts = sum(1 for r in valid if r["timed_out"])
+    zero_token = sum(1 for r in valid
                      if r["timed_out"] and r["tokens"]["output"] == 0)
     return {
-        "runs": n, "acted": acted, "passed": passed,
+        "runs": n, "valid": len(valid), "invalid": n - len(valid),
+        "acted": acted, "passed": passed,
         "timeouts": timeouts, "zero_token_timeouts": zero_token,
         "statuses": {s: sum(1 for r in records if status_of(r) == s)
-                     for s in ("finished", "TEXT-ONLY", "TOOL-TEXT",
-                               "NO-ACTION", "TIMEOUT", "UNSUPPORTED")},
+                     for s in ("PASS", "FAIL", "TEXT-ONLY", "TOOL-TEXT",
+                               "NO-ACTION", "TIMEOUT", "AGENT_ERROR",
+                               "PROVIDER_ERROR", "API_ERROR", "RUNNER_ERROR",
+                               "GRADER_ERROR")},
     }
 
 
 def decide(model, records, ab_records):
     """Return (verdict, rule, evidence)."""
-    s = summarize(records)
-    if has_unsupported(records):
-        return ("EXCLUDED", "no-tool-support",
-                "ollama rejects tool calls (HTTP 400 'does not support tools')")
+    valid = reporting.quality_records(records)
+    if not valid:
+        categories = sorted({reporting.error_category(r) for r in records
+                             if reporting.error_category(r)})
+        label = ", ".join(categories) or "no valid records"
+        return ("ERROR", "infrastructure-error",
+                f"0/{len(records)} valid attempts ({label}); quality not evaluated")
+    s = summarize(valid)
     if s["acted"] == 0 and s["passed"] == 0:
         # distinguish "too big" (nothing produced) from "prose/hallucination"
         if s["zero_token_timeouts"] >= max(1, s["runs"] - 1):
-            ev = (f"{s['zero_token_timeouts']}/{s['runs']} runs timed out with 0 output "
-                  f"tokens: model does not fit the 12 GB GPU")
+            ev = (f"{s['zero_token_timeouts']}/{s['runs']} valid runs timed out "
+                  "with 0 output tokens")
             if ab_records:
                 ab_acted = sum(1 for r in ab_records if r["tool_calls"] > 0)
                 ev += f"; with tool-use instructions still {ab_acted}/{len(ab_records)} acted"
@@ -111,13 +108,12 @@ def decide(model, records, ab_records):
         return ("EXCLUDED", "tool-hallucinator", ev)
     if s["timeouts"] >= max(1, s["runs"] * 0.8) and s["passed"] == 0:
         return ("EXCLUDED", "too-slow-for-hardware",
-                f"{s['timeouts']}/{s['runs']} timeouts at the 420s cap")
+                f"{s['timeouts']}/{s['runs']} valid runs timed out")
     note = ""
     if s["passed"] > 0:
         note = f"{s['passed']}/{s['runs']} passed"
     else:
-        note = (f"{s['acted']}/{s['runs']} acted but 0 passes "
-                f"(score is starter baseline)")
+        note = f"{s['acted']}/{s['runs']} acted but 0 passes"
     return ("QUALIFIED", "agentic", note)
 
 
@@ -155,6 +151,7 @@ def main():
         raise SystemExit("no records")
 
     models = sorted({r["model"] for r in records})
+    required_tasks = sorted({r["task"] for r in records})
     qualified, excluded = [], []
     for model in models:
         recs = [r for r in records if r["model"] == model]
@@ -169,25 +166,36 @@ def main():
     local = [m for m in models if m.startswith("ollama/")]
     hosted = [m for m in models if not m.startswith("ollama/")]
     md.append(f"Evaluated **{len(models)} models** ({len(local)} local ollama + "
-              f"{len(hosted)} hosted opencode Zen) across the full sweep "
+              f"{len(hosted)} hosted models) across the observed task suite "
               f"({len(records)} runs) and the tool-use instruction A/B "
               f"({len(ab)} runs).")
     md.append("")
-    md.append("Note: the free Zen models need `OPENCODE_API_KEY` in the "
-              "environment (without it they hit `FreeUsageLimitError`, HTTP "
-              "429). Without the key some runs time out with 0 tokens.")
+    md.append("Infrastructure failures are reported separately and do not count "
+              "as model-quality results. For each model/task, the latest valid "
+              "attempt is preferred over a later invalid retry.")
     md.append("")
 
     md.append(f"## Qualified ({len(qualified)})")
     md.append("")
-    md.append("| model | runs acted | passes | avg score | median time | note |")
-    md.append("|---|---|---|---|---|---|")
+    md.append("| model | valid coverage | ranking status | runs acted | passes | valid avg | median time | note |")
+    md.append("|---|---|---|---|---|---|---|---|")
     for e in sorted(qualified, key=lambda e: -e["summary"]["passed"]):
         recs = [r for r in records if r["model"] == e["model"]]
-        avg = sum(r["score"] for r in recs) / len(recs)
+        valid = reporting.quality_records(recs)
+        comparable = reporting.comparable_records(recs)
+        avg = sum(r["score"] for r in valid) / len(valid)
+        coverage = len({r["task"] for r in valid})
+        comparable_coverage = len({r["task"] for r in comparable})
+        if comparable_coverage == len(required_tasks):
+            ranking_status = "complete"
+        elif comparable_coverage:
+            ranking_status = "PROVISIONAL"
+        else:
+            ranking_status = "LEGACY"
         times = sorted(r["duration_s"] for r in recs)
-        med = times[len(times) // 2]
-        md.append(f"| {e['model']} | {e['summary']['acted']}/{e['summary']['runs']} | "
+        med = statistics.median(times)
+        md.append(f"| {e['model']} | {coverage}/{len(required_tasks)} | {ranking_status} | "
+                  f"{e['summary']['acted']}/{e['summary']['valid']} valid | "
                   f"{e['summary']['passed']} | {avg:.2f} | {med:.0f}s | {e['evidence']} |")
     md.append("")
 
@@ -229,8 +237,9 @@ def main():
     labels = {
         "no-tool-support": "no tool support (ollama rejects)",
         "tool-hallucinator": "hallucinates tool calls / never uses tools",
-        "too-big-for-hardware": "too big for 12 GB VRAM",
+        "too-big-for-hardware": "unresponsive on the tested hardware",
         "too-slow-for-hardware": "too slow for the time limit",
+        "infrastructure-error": "infrastructure error (quality not evaluated)",
     }
     for e in sorted(excluded, key=lambda e: (e["rule"], e["model"])):
         md.append(f"| {e['model']} | {labels.get(e['rule'], e['rule'])} | {e['evidence']} |")

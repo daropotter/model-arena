@@ -1,0 +1,4 @@
+opencode-go/deepseek-v4.1-flash
+opencode-go/deepseek-v4-pro
+opencode-go/gpt-6-luna
+openai/gpt-6.1-sol

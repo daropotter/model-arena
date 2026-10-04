@@ -1,5 +1,5 @@
-"""Visible tests for scheduler. They pass on the buggy starter: no
-dependencies, and the input order happens to be near-optimal."""
+"""Visible tests for scheduler. They pass on the buggy starter because each
+input order is already feasible and optimal, even in the basic fork case."""
 
 import json
 import subprocess
@@ -36,6 +36,18 @@ class TestScheduler(unittest.TestCase):
         result = run(payload)
         self.assertEqual(sorted(result["order"]), ["a", "b"])
         self.assertEqual(result["late"], 0)
+
+    def test_lateness_uses_cumulative_machine_time(self):
+        payload = {"jobs": [
+            {"id": "root", "duration": 4, "deadline": 4, "depends": []},
+            {"id": "left", "duration": 4, "deadline": 8,
+             "depends": ["root"]},
+            {"id": "right", "duration": 4, "deadline": 8,
+             "depends": ["root"]},
+        ]}
+        result = run(payload)
+        self.assertEqual(result["order"], ["root", "left", "right"])
+        self.assertEqual(result["late"], 1)
 
 
 if __name__ == "__main__":

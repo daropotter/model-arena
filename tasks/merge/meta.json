@@ -1,0 +1,10 @@
+{
+  "name": "merge",
+  "title": "Three-way text merge: hunks, conflicts, exact output contract",
+  "timeout": 1800,
+  "protected": [
+    "SPEC.md",
+    "tests/"
+  ],
+  "difficulty": "hard"
+}

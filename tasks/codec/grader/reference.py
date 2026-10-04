@@ -35,6 +35,8 @@ def decode_varint(raw: bytes, pos: int):
         count += 1
         value |= (byte & 0x7F) << shift
         if not byte & 0x80:
+            if value > 2 ** 32 - 1:
+                raise ValueError("varint out of uint32 range")
             return value, pos
         shift += 7
 
@@ -45,6 +47,8 @@ def encode_reference(in_path: Path, out_path: Path) -> None:
             or not isinstance(obj.get("text"), str):
         raise ValueError("input must be {\"text\": str}")
     payload = json.dumps(obj).encode("utf-8")
+    if len(payload) > 2 ** 32 - 1:
+        raise ValueError("payload too large")
     length = encode_varint(len(payload))
     crc = zlib.crc32(payload)
     out_path.write_bytes(MAGIC + length + payload + struct.pack("<I", crc))

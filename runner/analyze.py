@@ -14,6 +14,8 @@ import re
 import statistics
 from pathlib import Path
 
+import reporting
+
 ROOT = Path(__file__).resolve().parent.parent
 
 TOOL_TEXT_PATTERN = re.compile(
@@ -53,20 +55,8 @@ def weird_filenames(rec):
 
 
 def load_records(results: Path):
-    """Latest run per (model, task); `smoke` is a prescreen artifact."""
-    latest = {}
-    for record_path in sorted(results.glob("*/record.json")):
-        try:
-            record = json.loads(record_path.read_text())
-        except json.JSONDecodeError:
-            continue
-        if record.get("task") == "smoke":
-            continue  # prescreen artifact, not a scored competition task
-        key = (record["model"], record["task"])
-        finished = record.get("finished_at") or ""
-        if key not in latest or finished > (latest[key].get("finished_at") or ""):
-            latest[key] = record
-    return list(latest.values())
+    """Latest valid run per (model, task); smoke is a prescreen artifact."""
+    return reporting.load_records([results])
 
 
 def is_unsupported(rec) -> bool:
@@ -97,19 +87,22 @@ def produced_text(rec) -> bool:
 
 
 def status_of(rec) -> str:
+    category = reporting.error_category(rec)
+    if category:
+        return category
+    if rec.get("passed"):
+        return "PASS"
     if rec.get("timed_out"):
         return "TIMEOUT"
-    if is_unsupported(rec):
-        return "UNSUPPORTED"
     if rec.get("exit_code") not in (0, None):
-        return f"ERROR({rec.get('exit_code')})"
+        return "AGENT_ERROR"
     if rec.get("tool_calls", 0) == 0:
         if hallucinated_tool_text(rec):
             return "TOOL-TEXT"
         if produced_text(rec):
             return "TEXT-ONLY"
         return "NO-ACTION"
-    return "finished"
+    return "FAIL"
 
 
 def did_work(rec) -> bool:
@@ -128,53 +121,34 @@ def fmt_secs(seconds) -> str:
 def build_report(records):
     models = sorted({r["model"] for r in records})
     tasks = sorted({r["task"] for r in records})
+    quality = reporting.quality_records(records)
+    comparable = reporting.comparable_records(records)
+    superseded_invalid = sum(len(r.get("_later_invalid", [])) for r in records)
 
-    md = ["# model-arena — full local run", ""]
-    md.append(f"Models: **{len(models)}**, tasks: **{len(tasks)}**, runs: **{len(records)}**")
+    md = ["# model-arena - analysis", ""]
+    md.append(f"Models: **{len(models)}**, required tasks: **{len(tasks)}**, "
+              f"selected attempts: **{len(records)}**, valid quality runs: **{len(quality)}**, "
+              f"current-suite comparable runs: **{len(comparable)}**, "
+              f"later invalid retries: **{superseded_invalid}**")
     md.append("")
-
-    # Baseline: score a model gets by doing nothing. The hidden suites include
-    # cases the untouched starter already satisfies (visible behavior), so
-    # "did nothing" is not score 0.
-    baselines = {}
-    for task in tasks:
-        scores = [r["score"] for r in records
-                  if r["task"] == task and r["tool_calls"] == 0 and not r["timed_out"]]
-        if scores:
-            baselines[task] = min(scores)
+    md.append("Infrastructure failures (`PROVIDER_ERROR`, `API_ERROR`, `RUNNER_ERROR`, "
+              "`GRADER_ERROR`) are invalid attempts: they are shown but excluded from "
+              "quality averages and coverage. Selection uses the latest valid attempt; a "
+              "later invalid retry does not replace it.")
+    md.append("")
+    baselines = reporting.explicit_baselines(ROOT / "tasks")
     if baselines:
-        md.append("## 0. TL;DR")
-        md.append("")
-        md.append(f"- **Passes: {sum(1 for r in records if r['passed'])}/{len(records)} runs, "
-                  f"{len({r['model'] for r in records if r['passed']})}/{len(models)} models.** "
-                  f"Only `gemma4-200k:latest` completed a task (`ledger`).")
-        acted = [r for r in records if did_work(r)]
-        md.append(f"- **{len(acted)}/{len(records)} runs actually used tools.** "
-                  f"The rest answered with prose, printed fake tool calls, or timed out.")
-        md.append("- **Baseline warning**: the starter already passes part of every hidden suite, "
-                  "so a model that does *nothing* scores about "
-                  + ", ".join(f"`{t}` {s:.2f}" for t, s in sorted(baselines.items()))
-                  + ". Compare scores against those floors, not against 0.")
-        md.append("- Models bigger than VRAM (26b/31b/35b on 12 GB) never finished a single "
-                  "turn in 7 minutes: all their runs hit the timeout with 0 tokens.")
-        md.append("- Ollama's `tools` capability flag is necessary but not sufficient: "
-                  "llama3.1/mistral/ornith advertise it and still never emit a real tool call.")
-        md.append("")
-
-    md.append(
-        "Legend: cell shows `score · duration`. Statuses when not PASS:\n"
-        "`fail` = worked (used tools) but wrong result; "
-        "`TO` = hit the time limit; "
-        "`UNSUP` = ollama rejects the model: no tool-call support; "
-        "`TEXT-ONLY` = model answered with prose, never called a tool; "
-        "`TOOL-TEXT` = model wrote the tool call as text instead of calling it; "
-        "`NO-ACTION` = no tool call and no text; `-` = not run.")
+        md.append("Canonical starter floors: " + ", ".join(
+            f"`{task}` {score:.2f}" for task, score in sorted(baselines.items())))
+    else:
+        md.append("Canonical starter floors are not available. No floor is inferred from "
+                  "provider failures or no-action model runs.")
     md.append("")
 
     md.append("## 1. Model x task matrix")
     md.append("")
-    md.append("| model | " + " | ".join(tasks) + " | avg score |")
-    md.append("|" + "---|" * (len(tasks) + 2))
+    md.append("| model | " + " | ".join(tasks) + " | valid avg | coverage | status |")
+    md.append("|" + "---|" * (len(tasks) + 4))
     for model in models:
         cells = []
         for task in tasks:
@@ -182,16 +156,24 @@ def build_report(records):
             if not runs:
                 cells.append("-")
                 continue
-            best = max(runs, key=lambda r: (r["passed"], r["score"]))
-            status = status_of(best)
-            label = "PASS" if best["passed"] else {
-                "TIMEOUT": "TO", "UNSUPPORTED": "UNSUP",
-                "NO-ACTION": "NO-ACTION", "TOOL-TEXT": "TOOL-TEXT",
-            }.get(status, "fail")
-            cells.append(f"{label} {best['score']:.2f} · {fmt_secs(best['duration_s'])}")
-        scores = [r["score"] for r in records if r["model"] == model]
-        avg = statistics.mean(scores) if scores else 0.0
-        md.append(f"| {model} | " + " | ".join(cells) + f" | **{avg:.2f}** |")
+            run = runs[0]
+            status = status_of(run)
+            score = f" {run['score']:.2f}" if reporting.is_valid(run) else ""
+            later = " (later invalid: " + ", ".join(run["_later_invalid"]) + ")" \
+                if run.get("_later_invalid") else ""
+            cells.append(f"{status}{score} · {fmt_secs(run['duration_s'])}{later}")
+        model_quality = [r for r in quality if r["model"] == model]
+        avg = statistics.mean(r["score"] for r in model_quality) if model_quality else None
+        coverage = len({r["task"] for r in model_quality})
+        model_comparable = [r for r in comparable if r["model"] == model]
+        if model_comparable:
+            comp_coverage = len({r["task"] for r in model_comparable})
+            provisional = "complete" if comp_coverage == len(tasks) else "PROVISIONAL"
+        else:
+            provisional = "LEGACY"
+        avg_text = f"**{avg:.2f}**" if avg is not None else "-"
+        md.append(f"| {model} | " + " | ".join(cells)
+                  + f" | {avg_text} | {coverage}/{len(tasks)} | {provisional} |")
     md.append("")
 
     md.append("## 2. Per-model summary")
@@ -199,58 +181,80 @@ def build_report(records):
     md.append("`acted` = used at least one tool. `prose-only` = never called a tool "
               "(TEXT-ONLY + TOOL-TEXT + NO-ACTION). `TO` = timeout.")
     md.append("")
-    md.append("| model | avg score | passed | acted | prose-only | TO | unsupported | "
+    md.append("| model | valid avg | coverage | passed | acted | invalid | TO | "
               "total time | median/task | out-tokens | tool calls | tool errors |")
     md.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
     rows = []
     for model in models:
         runs = [r for r in records if r["model"] == model]
-        scores = [r["score"] for r in runs]
-        avg = statistics.mean(scores) if scores else 0.0
-        passed = sum(1 for r in runs if r["passed"])
+        valid = [r for r in runs if reporting.is_valid(r)]
+        avg = statistics.mean(r["score"] for r in valid) if valid else None
+        passed = sum(1 for r in valid if status_of(r) == "PASS")
         acted = sum(1 for r in runs if did_work(r))
-        prose_only = sum(1 for r in runs
-                         if status_of(r) in ("TEXT-ONLY", "TOOL-TEXT", "NO-ACTION"))
         timeouts = sum(1 for r in runs if r["timed_out"])
-        unsupported = sum(1 for r in runs if is_unsupported(r))
         total_time = sum(r["duration_s"] for r in runs)
         median_time = statistics.median([r["duration_s"] for r in runs]) if runs else 0
         out_tok = sum(r["tokens"]["output"] for r in runs)
         tools = sum(r["tool_calls"] for r in runs)
         tool_err = sum(r["tool_errors"] for r in runs)
-        rows.append((avg, model, passed, acted, timeouts, median_time))
+        coverage = len({r["task"] for r in valid})
+        rows.append((avg, model, passed, acted, median_time, coverage))
         md.append(
-            f"| {model} | **{avg:.2f}** | {passed}/{len(runs)} | {acted}/{len(runs)} | "
-            f"{prose_only}/{len(runs)} | {timeouts} | {unsupported} | "
+            f"| {model} | {f'{avg:.2f}' if avg is not None else '-'} | "
+            f"{coverage}/{len(tasks)} | {passed}/{len(valid)} | {acted}/{len(runs)} | "
+            f"{len(runs) - len(valid) + sum(len(r.get('_later_invalid', [])) for r in runs)} | "
+            f"{timeouts} | "
             f"{fmt_secs(total_time)} | {fmt_secs(median_time)} | {out_tok} | "
             f"{tools} | {tool_err} |")
     md.append("")
 
     md.append("### Failure-mode breakdown")
     md.append("")
-    md.append("| model | worked (tools) | TEXT-ONLY | TOOL-TEXT | NO-ACTION | TIMEOUT | UNSUPPORTED |")
-    md.append("|---|---|---|---|---|---|---|")
+    statuses = ("PASS", "FAIL", "TEXT-ONLY", "TOOL-TEXT", "NO-ACTION", "TIMEOUT",
+                "AGENT_ERROR", "PROVIDER_ERROR", "API_ERROR", "RUNNER_ERROR", "GRADER_ERROR")
+    md.append("| model | " + " | ".join(statuses) + " |")
+    md.append("|" + "---|" * (len(statuses) + 1))
     for model in models:
         runs = [r for r in records if r["model"] == model]
-        counts = {}
-        for status in ("finished", "TEXT-ONLY", "TOOL-TEXT", "NO-ACTION",
-                       "TIMEOUT", "UNSUPPORTED"):
-            counts[status] = sum(1 for r in runs if status_of(r) == status)
-        md.append(
-            f"| {model} | {counts['finished']} | {counts['TEXT-ONLY']} | "
-            f"{counts['TOOL-TEXT']} | {counts['NO-ACTION']} | "
-            f"{counts['TIMEOUT']} | {counts['UNSUPPORTED']} |")
+        counts = {status: sum(1 for r in runs if status_of(r) == status)
+                  + sum(r.get("_later_invalid", []).count(status) for r in runs)
+                  for status in statuses}
+        md.append(f"| {model} | " + " | ".join(str(counts[s]) for s in statuses) + " |")
     md.append("")
 
-    md.append("## 3. Ranking by average score")
+    md.append("## 3. Primary ranking (complete required suite)")
     md.append("")
-    md.append("| # | model | avg score | pass rate | acted | median task time |")
-    md.append("|---|---|---|---|---|---|")
-    for i, (avg, model, passed, acted, timeouts, median_time) in enumerate(
-                sorted(rows, key=lambda x: (-x[0], x[5])), start=1):
-        n = len([r for r in records if r["model"] == model])
-        md.append(f"| {i} | {model} | {avg:.2f} | {passed}/{n} | {acted}/{n} | "
+    comparable_rows = []
+    for model in models:
+        runs = [r for r in comparable if r["model"] == model]
+        coverage = len({r["task"] for r in runs})
+        if runs:
+            comparable_rows.append((statistics.mean(r["score"] for r in runs), model,
+                                    sum(status_of(r) == "PASS" for r in runs),
+                                    statistics.median(r["duration_s"] for r in runs),
+                                    coverage))
+    complete = [row for row in comparable_rows if row[4] == len(tasks)]
+    md.append(f"Only schema-v2 records from `{reporting.CURRENT_SUITE_ID}` with full "
+              "provenance and complete task coverage are comparable here.")
+    md.append("")
+    md.append("| # | model | avg score | pass rate | median task time |")
+    md.append("|---|---|---|---|---|")
+    for i, (avg, model, passed, median_time, coverage) in enumerate(
+            sorted(complete, key=lambda x: (-x[0], x[3])), start=1):
+        md.append(f"| {i} | {model} | {avg:.2f} | {passed}/{len(tasks)} | "
                   f"{fmt_secs(median_time)} |")
+    if not complete:
+        md.append(f"| - | No model has {len(tasks)}/{len(tasks)} valid coverage | - | - | - |")
+    md.append("")
+    md.append("### Historical/provisional quality results")
+    md.append("")
+    md.append("| model | valid avg | coverage | passes |")
+    md.append("|---|---|---|---|")
+    for avg, model, passed, acted, median_time, coverage in sorted(
+            rows,
+            key=lambda x: (-x[5], -(x[0] if x[0] is not None else -1), x[1])):
+        md.append(f"| {model} | {f'{avg:.2f}' if avg is not None else '-'} | "
+                  f"{coverage}/{len(tasks)} | {passed}/{coverage} |")
     md.append("")
 
     md.append("## 4. Difficulty per task")
@@ -259,12 +263,14 @@ def build_report(records):
     md.append("|---|---|---|---|---|---|")
     for task in tasks:
         runs = [r for r in records if r["task"] == task]
-        avg = statistics.mean([r["score"] for r in runs]) if runs else 0.0
-        passed = sum(1 for r in runs if r["passed"])
+        valid = [r for r in runs if reporting.is_valid(r)]
+        avg = statistics.mean([r["score"] for r in valid]) if valid else None
+        passed = sum(1 for r in valid if status_of(r) == "PASS")
         timeouts = sum(1 for r in runs if r["timed_out"])
         no_action = sum(1 for r in runs if not did_work(r))
         median_time = statistics.median([r["duration_s"] for r in runs]) if runs else 0
-        md.append(f"| {task} | {avg:.2f} | {passed}/{len(runs)} | {timeouts} | "
+        md.append(f"| {task} | {f'{avg:.2f}' if avg is not None else '-'} | "
+                  f"{passed}/{len(valid)} valid | {timeouts} | "
                   f"{no_action} | {fmt_secs(median_time)} |")
     md.append("")
 
@@ -282,7 +288,7 @@ def build_report(records):
     md.append("| tier | tasks | pass rate (models) | pass rate (runs) |")
     md.append("|---|---|---|---|")
     for tier in tiers:
-        tier_runs = [r for r in records if r["task"] in tier_tasks.get(tier, [])]
+        tier_runs = [r for r in quality if r["task"] in tier_tasks.get(tier, [])]
         if not tier_runs:
             md.append(f"| {tier} | {', '.join(tier_tasks.get(tier, [])) or '-'} "
                       f"| - | - |")
@@ -295,14 +301,16 @@ def build_report(records):
                   f"| {passed_runs}/{len(tier_runs)} |")
     md.append("")
 
-    md.append("## 5. All runs (chronological)")
+    md.append("## 5. Selected attempts")
     md.append("")
     md.append("| model | task | status | score | duration | out-tok | tools | detail |")
     md.append("|---|---|---|---|---|---|---|---|")
     for r in sorted(records, key=lambda r: (r["model"], r["task"])):
+        score_text = f"{r['score']:.2f}" if reporting.is_valid(r) else "-"
         md.append(
             f"| {r['model']} | {r['task']} | {status_of(r)} | "
-            f"{'PASS' if r['passed'] else 'fail'} {r['score']:.2f} | "
+            f"{'PASS' if status_of(r) == 'PASS' else 'fail'} "
+            f"{score_text} | "
             f"{fmt_secs(r['duration_s'])} | {r['tokens']['output']} | "
             f"{r['tool_calls']} | {str(r['detail'])[:150].replace('|', '/')} |")
     md.append("")
@@ -323,7 +331,8 @@ def build_report(records):
         md.append(f"Models ollama refuses to run with tools: {', '.join('`' + m + '`' for m in unsupported)}")
         md.append("")
     text_only = [m for m in sorted({r["model"] for r in records})
-                 if all(status_of(r) in ("TEXT-ONLY", "UNSUPPORTED", "NO-ACTION")
+                 if all(status_of(r) in ("TEXT-ONLY", "TOOL-TEXT", "NO-ACTION",
+                                         "PROVIDER_ERROR", "API_ERROR")
                         for r in records if r["model"] == m)]
     if text_only:
         md.append("Models that never produced a tool call in any run "

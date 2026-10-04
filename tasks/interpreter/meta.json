@@ -1,0 +1,10 @@
+{
+  "name": "interpreter",
+  "title": "Evaluator for a tiny language: lexical scoping, closures, arithmetic",
+  "timeout": 1800,
+  "protected": [
+    "SPEC.md",
+    "tests/"
+  ],
+  "difficulty": "hard"
+}

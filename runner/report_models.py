@@ -25,6 +25,7 @@ sys.path.insert(0, str(ROOT / "runner"))
 import analyze  # noqa: E402
 import roster  # noqa: E402
 import prescreen as prescreen_mod  # noqa: E402
+import reporting  # noqa: E402
 
 TASK_ORDER = ["cronlog", "datajanitor", "generator", "ledger", "tasklog"]
 NEW_TASK_ORDER = ["filedock", "sumtool", "pipeline", "codec", "scheduler"]
@@ -42,12 +43,17 @@ TASK_TITLES = {
     "scheduler": "minimize late jobs with dependencies",
 }
 STATUS_LABEL = {
-    "finished": "worked",
+    "PASS": "passed",
+    "FAIL": "worked but failed",
     "TEXT-ONLY": "prose-only",
     "TOOL-TEXT": "fake tool call (as text)",
     "NO-ACTION": "no action",
     "TIMEOUT": "timeout",
-    "UNSUPPORTED": "no tool support",
+    "AGENT_ERROR": "agent process error",
+    "PROVIDER_ERROR": "provider error (invalid)",
+    "API_ERROR": "API error (invalid)",
+    "RUNNER_ERROR": "runner error (invalid)",
+    "GRADER_ERROR": "grader error (invalid)",
 }
 
 
@@ -64,7 +70,10 @@ def fetch_zen_registry() -> dict:
     for prov_name, prov in data.items():
         if not isinstance(prov, dict):
             continue
-        for model_id, entry in (prov.get("models") or {}).items():
+        models = prov.get("models")
+        if not isinstance(models, dict):
+            continue
+        for model_id, entry in models.items():
             registry[f"{prov_name}/{model_id}"] = entry
     return registry
 
@@ -82,8 +91,12 @@ def fetch_ollama_meta(models):
     for model in models:
         if not model.startswith("ollama/"):
             entry = registry.get(model, {})
+            if not isinstance(entry, dict):
+                entry = {}
             limit = entry.get("limit") or {}
             cost = entry.get("cost") or {}
+            limit = limit if isinstance(limit, dict) else {}
+            cost = cost if isinstance(cost, dict) else {}
             meta[model] = {
                 "size_gb": None,
                 "capabilities": (["completion", "tools"]
@@ -121,50 +134,46 @@ def fetch_ollama_meta(models):
 # ------------------------------------------------------------------- helpers
 
 def load_runs(results_dirs):
-    """Latest record.json per (model, task), split into scored and smoke."""
-    latest_scored, latest_smoke = {}, {}
-    for directory in results_dirs:
-        for path in sorted(Path(directory).glob("*/record.json")):
-            try:
-                record = json.loads(path.read_text())
-            except json.JSONDecodeError:
-                continue
-            finished = record.get("finished_at") or ""
-            if record.get("task") == "smoke":
-                key = record["model"]
-                if key not in latest_smoke or finished > (
-                        latest_smoke[key].get("finished_at") or ""):
-                    latest_smoke[key] = record
-            else:
-                key = (record["model"], record["task"])
-                if key not in latest_scored or finished > (
-                        latest_scored[key].get("finished_at") or ""):
-                    latest_scored[key] = record
-    return list(latest_scored.values()), list(latest_smoke.values())
+    """Latest valid record per model/task, split into scored and smoke."""
+    return reporting.split_smoke(reporting.load_records(results_dirs, include_smoke=True))
 
 
-def run_behavior(run_dir):
+def run_behavior(run):
     """Tool usage, tool errors, text snippets and API errors from events."""
     info = {"tools": {}, "tool_errors": {}, "texts": [], "api_errors": 0,
             "events_bytes": 0}
-    if not run_dir:
+    events = None
+    if isinstance(run, dict):
+        if run.get("_record_path"):
+            events = Path(run["_record_path"]).parent / "events.jsonl"
+        if events is None or not events.exists():
+            run = run.get("run_dir")
+        else:
+            run = None
+    if run is not None:
+        events = Path(run) / "events.jsonl" if run else None
+    if events is None:
         return info
-    events = Path(run_dir) / "events.jsonl"
     if not events.exists():
         return info
-    raw = events.read_text(errors="replace")
+    try:
+        raw = events.read_text(errors="replace")
+    except OSError:
+        return info
     info["events_bytes"] = len(raw)
     for line in raw.splitlines():
         try:
             ev = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if not isinstance(ev, dict):
+            continue
         etype = ev.get("type")
-        part = ev.get("part", {}) or {}
+        part = ev.get("part") if isinstance(ev.get("part"), dict) else {}
         if etype == "tool_use":
             tool = part.get("tool", "?")
             info["tools"][tool] = info["tools"].get(tool, 0) + 1
-            state = part.get("state", {}) or {}
+            state = part.get("state") if isinstance(part.get("state"), dict) else {}
             if state.get("status") == "error" or state.get("error"):
                 info["tool_errors"][tool] = info["tool_errors"].get(tool, 0) + 1
         elif etype == "text":
@@ -214,7 +223,7 @@ def fmt(seconds):
 
 def status_cell(record):
     status = analyze.status_of(record)
-    if record["passed"]:
+    if status == "PASS":
         return "**PASS**"
     label = STATUS_LABEL.get(status, status)
     return f"fail ({label})"
@@ -229,10 +238,10 @@ def meta_line(model, meta):
     m = meta.get(model, {})
     bits = []
     if m.get("hosted"):
-        tag = "hosted (opencode Zen"
+        tag = "hosted"
         if m.get("free"):
-            tag += ", free"
-        bits.append(tag + ")")
+            tag += " (free registry pricing)"
+        bits.append(tag)
     if m.get("size_gb"):
         bits.append(f"{m['size_gb']:.1f} GB")
     if m.get("params"):
@@ -246,33 +255,32 @@ def meta_line(model, meta):
     caps = m.get("capabilities") or []
     if caps:
         bits.append("capabilities: " + ", ".join(f"`{c}`" for c in caps))
-    return " · ".join(bits) if bits else "(brak metadanych)"
+    return " · ".join(bits) if bits else "(no metadata)"
 
 
-def baseline_floors(scored):
-    floors = {}
-    for task in sorted({r["task"] for r in scored}):
-        scores = [r["score"] for r in scored
-                  if r["task"] == task and r["tool_calls"] == 0
-                  and not r["timed_out"]]
-        if scores:
-            floors[task] = min(scores)
-    return floors
+def baseline_floors(scored=None, results_dir=None):
+    """Load explicit starter floors; model/provider failures are not baselines."""
+    return reporting.explicit_baselines(ROOT / "tasks", results_dir)
 
 
 # ------------------------------------------------------------ model section
 
-def model_section(model, runs, meta, verdict, evidence, ab_runs, smoke_runs):
+def model_section(model, runs, meta, verdict, evidence, ab_runs, smoke_runs,
+                  required_tasks):
     lines = []
-    passed = sum(1 for r in runs if r["passed"])
+    valid = reporting.quality_records(runs)
+    comparable = reporting.comparable_records(runs)
+    passed = sum(1 for r in valid if analyze.status_of(r) == "PASS")
     acted = sum(1 for r in runs if r["tool_calls"] > 0)
-    scores = [r["score"] for r in runs]
-    avg = statistics.mean(scores) if scores else 0.0
+    scores = [r["score"] for r in valid]
+    avg = statistics.mean(scores) if scores else None
     times = [r["duration_s"] for r in runs]
     median_time = statistics.median(times) if times else 0
     out_tok = sum(r["tokens"]["output"] for r in runs)
     tools = sum(r["tool_calls"] for r in runs)
     tool_err = sum(r["tool_errors"] for r in runs)
+    invalid = sum(not reporting.is_valid(r) for r in runs) + sum(
+        len(r.get("_later_invalid", [])) for r in runs)
 
     badge = "✅" if passed else ("⚠️" if acted else "❌")
     lines.append(f"### {badge} `{model}`")
@@ -282,7 +290,11 @@ def model_section(model, runs, meta, verdict, evidence, ab_runs, smoke_runs):
     lines.append(f"**Metrics:** {meta_line(model, meta)}")
     lines.append("")
     lines.append(
-        f"**Summary:** avg score **{avg:.2f}** · passes **{passed}/{len(runs)}** · "
+        f"**Summary:** valid avg **{f'{avg:.2f}' if avg is not None else '-'}** · "
+        f"coverage **{len({r['task'] for r in valid})}/{len(required_tasks)}** "
+        f"({'complete' if len({r['task'] for r in comparable}) == len(required_tasks) else 'provisional' if comparable else 'legacy'}) · "
+        f"passes **{passed}/{len(valid)} valid** · "
+        f"invalid attempts {invalid} · "
         f"used tools {acted}/{len(runs)} · median time {fmt(median_time)} · "
         f"out-tokens {out_tok:,} · tool calls {tools} ({tool_err} errors)")
     lines.append("")
@@ -297,10 +309,11 @@ def model_section(model, runs, meta, verdict, evidence, ab_runs, smoke_runs):
         task_runs = [r for r in runs if r["task"] == task]
         if not task_runs:
             continue
-        best = max(task_runs, key=lambda r: (r["passed"], r["score"]))
+        best = task_runs[0]
         by_task[task] = best
+        score = f"{best['score']:.2f}" if reporting.is_valid(best) else "-"
         lines.append(
-            f"| `{task}` | {status_cell(best)} | {best['score']:.2f} | "
+            f"| `{task}` | {status_cell(best)} | {score} | "
             f"{fmt(best['duration_s'])} | {run_date(best)} | "
             f"{best['tokens']['output']:,} | "
             f"{tool_summary(best.get('tool_names'), None)} |")
@@ -316,12 +329,12 @@ def model_section(model, runs, meta, verdict, evidence, ab_runs, smoke_runs):
         best = by_task.get(task)
         if not best:
             continue
-        behavior = run_behavior(best.get("run_dir"))
+        behavior = run_behavior(best)
         lines.append(f"**`{task}`** — {TASK_TITLES.get(task, task)}")
         lines.append("")
         detail = detail_bullets(best["detail"])
         if detail:
-            lines.append("Powody niepowodzenia / uwagi:")
+            lines.append("Failure reasons / notes:")
             for item in detail:
                 lines.append(f"- {item}")
             lines.append("")
@@ -335,8 +348,10 @@ def model_section(model, runs, meta, verdict, evidence, ab_runs, smoke_runs):
         if behavior["tool_errors"]:
             lines.append("Tool errors: " + tool_summary(behavior["tool_errors"], None))
         lines.append("")
-        lines.append(f"Artefakty: `{best.get('run_dir')}/` · workspace: "
-                     f"`{best.get('workspace')}`")
+        fallback = Path(best.get("_record_path", "")).parent if best.get("_record_path") else None
+        artifact = reporting.relative_artifact(best.get("run_dir"), ROOT, fallback)
+        workspace = reporting.relative_artifact(best.get("workspace"), ROOT)
+        lines.append(f"Artifacts: `{artifact}/` · workspace: `{workspace}`")
         lines.append("")
 
     if ab_runs:
@@ -370,7 +385,7 @@ def prescreen_only_section(model, entry, smoke_record, meta):
     lines.append(f"**Metrics:** {meta_line(model, meta)}")
     lines.append("")
     if smoke_record:
-        behavior = run_behavior(smoke_record.get("run_dir"))
+        behavior = run_behavior(smoke_record)
         status = analyze.status_of(smoke_record)
         lines.append(
             f"**Smoke:** {STATUS_LABEL.get(status, status)} · score "
@@ -395,6 +410,7 @@ def prescreen_only_section(model, entry, smoke_record, meta):
 
 def build_report(scored, smoke, ab, prescreen_entries, meta, floors):
     models = sorted({r["model"] for r in scored})
+    required_tasks = sorted({r["task"] for r in scored})
     smoke_by_model = {}
     for r in smoke:
         smoke_by_model.setdefault(r["model"], []).append(r)
@@ -410,9 +426,11 @@ def build_report(scored, smoke, ab, prescreen_entries, meta, floors):
     lines.append("")
     lines.append(f"Generated: {datetime.now().isoformat(timespec='seconds')}")
     lines.append("")
+    valid_scored = reporting.quality_records(scored)
     lines.append(f"Models in the full sweep: **{len(models)}** "
                  f"({len(local)} local ollama + {len(hosted)} hosted "
-                 f"opencode Zen) · scored runs: **{len(scored)}** · "
+                 f"models) · scored runs: **{len(scored)}** · "
+                 f"valid quality runs: **{len(valid_scored)}** · "
                  f"prescreened models: **{len(prescreen_entries)}** · "
                  f"A/B runs: **{len(ab)}**")
     lines.append("")
@@ -422,23 +440,27 @@ def build_report(scored, smoke, ab, prescreen_entries, meta, floors):
     lines.append("")
     lines.append("- **Verdict** is the decision from `roster.py`: qualified (uses "
                  "tools) or excluded (with reason and evidence).")
-    lines.append("- **Run status**: `PASS` = task passed; the other labels "
-                 "describe the failure mode:")
+    lines.append("- **Run status** uses one precedence order. Infrastructure errors "
+                 "(`provider`, `API`, `runner`, `grader`) make an attempt invalid and "
+                 "exclude its score from averages and coverage. `PASS` is used only for "
+                 "a valid passing grade; the other labels describe model outcomes:")
     lines.append("  - `worked` — the model really used tools, but the result was wrong;")
     lines.append("  - `prose-only` — answered in prose, never called a tool;")
     lines.append("  - `fake tool call (as text)` — printed the tool call as text "
                  "(e.g. `{\"type\":\"write\",...}`), nothing happened;")
     lines.append("  - `no action` — neither tools nor text;")
-    lines.append("  - `timeout` — exceeded the time limit (0 tokens = never started);")
-    lines.append("  - `no tool support` — ollama rejects the model for tool calls.")
-    lines.append("- **Score** compares against the baseline floor (below): the "
-                 "starter passes part of the hidden tests, so \"doing nothing\" "
-                 "does not score 0.")
+    lines.append("  - `timeout` — exceeded the configured time limit;")
+    lines.append("  - infrastructure-error labels identify invalid attempts.")
+    lines.append("- **Selection** prefers the latest valid attempt over any later "
+                 "invalid retry. Historical record files remain unchanged.")
+    lines.append(f"- **Ranking** is primary only for schema-v2 records from "
+                 f"`{reporting.CURRENT_SUITE_ID}` with full provenance and task "
+                 "coverage. Older records are marked legacy.")
     lines.append("- `<details>` sections expand the run: grading reasons, the "
                  "model's last message, and paths to raw data.")
     lines.append("")
 
-    lines.append("### Baseline floors (score for doing nothing)")
+    lines.append("### Canonical starter floors")
     lines.append("")
     lines.append("| task | floor |")
     lines.append("|---|---|")
@@ -446,29 +468,46 @@ def build_report(scored, smoke, ab, prescreen_entries, meta, floors):
                        key=lambda t: (TASK_ORDER + NEW_TASK_ORDER).index(t)
                        if t in TASK_ORDER + NEW_TASK_ORDER else 99):
         lines.append(f"| `{task}` | {floors[task]:.2f} |")
+    if not floors:
+        lines.append("| - | unavailable (not inferred from model failures) |")
     lines.append("")
 
     # summary table
     lines.append("## Summary table")
     lines.append("")
-    lines.append("| # | model | avg score | passes | used tools | median | verdict |")
-    lines.append("|---|---|---|---|---|---|---|")
+    lines.append("| # | model | valid avg | coverage | passes | used tools | median | status | verdict |")
+    lines.append("|---|---|---|---|---|---|---|---|---|")
     rows = []
     for model in models:
         runs = [r for r in scored if r["model"] == model]
-        avg = statistics.mean([r["score"] for r in runs])
-        passed = sum(1 for r in runs if r["passed"])
+        valid = reporting.quality_records(runs)
+        comparable = reporting.comparable_records(runs)
+        avg = statistics.mean([r["score"] for r in valid]) if valid else None
+        passed = sum(1 for r in valid if analyze.status_of(r) == "PASS")
         acted = sum(1 for r in runs if r["tool_calls"] > 0)
         median = statistics.median([r["duration_s"] for r in runs])
+        coverage = len({r["task"] for r in valid})
+        comparable_coverage = len({r["task"] for r in comparable})
+        if comparable_coverage == len(required_tasks):
+            rank_status = "complete"
+        elif comparable_coverage:
+            rank_status = "PROVISIONAL"
+        else:
+            rank_status = "LEGACY"
         verdict, _rule, _ev = roster.decide(model, runs,
                                             ab_by_model.get(model, []))
-        rows.append((verdict == "QUALIFIED", passed, avg, model, acted,
-                     len(runs), median, verdict))
-    rows.sort(key=lambda r: (-r[0], -r[1], -r[2]))
-    for i, (qualified, passed, avg, model, acted, total, median, verdict) in \
+        rows.append((comparable_coverage == len(required_tasks), coverage,
+                     avg if avg is not None else -1, model, passed, acted,
+                     len(runs), median, rank_status, verdict))
+    rows.sort(key=lambda r: (-r[0], -r[1], -r[2], r[3]))
+    for i, (complete, coverage, avg, model, passed, acted, total, median,
+            rank_status, verdict) in \
             enumerate(rows, start=1):
-        lines.append(f"| {i} | `{model}` | {avg:.2f} | {passed}/{total} | "
-                     f"{acted}/{total} | {fmt(median)} | {verdict} |")
+        avg_text = f"{avg:.2f}" if avg >= 0 else "-"
+        rank = str(i) if complete else "-"
+        lines.append(f"| {rank} | `{model}` | {avg_text} | "
+                     f"{coverage}/{len(required_tasks)} | {passed}/{coverage} valid | "
+                     f"{acted}/{total} | {fmt(median)} | {rank_status} | {verdict} |")
     lines.append("")
 
     # qualified sections
@@ -480,14 +519,16 @@ def build_report(scored, smoke, ab, prescreen_entries, meta, floors):
                         if roster.decide(model, [r for r in scored if r["model"] == model],
                                          ab_by_model.get(model, []))[0] == "QUALIFIED"]
     qualified_models.sort(key=lambda m: (
-        -sum(1 for r in scored if r["model"] == m and r["passed"]),
-        -statistics.mean([r["score"] for r in scored if r["model"] == m])))
+        -sum(1 for r in scored if r["model"] == m and analyze.status_of(r) == "PASS"),
+        -statistics.mean([r["score"] for r in scored
+                          if r["model"] == m and reporting.is_valid(r)])
+        if any(r["model"] == m and reporting.is_valid(r) for r in scored) else 0))
     for model in qualified_models:
         runs = [r for r in scored if r["model"] == model]
         verdict, _rule, evidence = roster.decide(model, runs, ab_by_model.get(model, []))
         lines += model_section(model, runs, meta, verdict, evidence,
                                ab_by_model.get(model, []),
-                               smoke_by_model.get(model, []))
+                               smoke_by_model.get(model, []), required_tasks)
         lines.append("---")
         lines.append("")
 
@@ -507,7 +548,7 @@ def build_report(scored, smoke, ab, prescreen_entries, meta, floors):
         rule, evidence = rules[model]
         lines += model_section(model, runs, meta, "EXCLUDED", f"{rule}: {evidence}",
                                ab_by_model.get(model, []),
-                               smoke_by_model.get(model, []))
+                               smoke_by_model.get(model, []), required_tasks)
         lines.append("---")
         lines.append("")
 
@@ -578,7 +619,7 @@ def main():
     models = sorted({r["model"] for r in scored} |
                     {e["model"] for e in prescreen_entries})
     meta = fetch_ollama_meta(models)
-    floors = baseline_floors(scored)
+    floors = baseline_floors(results_dir=Path(args.results))
 
     report = build_report(scored, smoke, ab, prescreen_entries, meta, floors)
     out_path = Path(args.out) if args.out else Path(args.results) / "models-report.md"

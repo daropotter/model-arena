@@ -1,0 +1,17 @@
+{
+  "codec": 0.429,
+  "cronlog": 0.333,
+  "datajanitor": 0.0,
+  "filedock": 0.0,
+  "generator": 0.0,
+  "interpreter": 0.686,
+  "kvstore": 0.591,
+  "ledger": 0.286,
+  "merge": 0.5,
+  "pipeline": 0.545,
+  "regex": 0.343,
+  "scheduler": 0.533,
+  "smoke": 0.0,
+  "sumtool": 0.556,
+  "tasklog": 0.545
+}

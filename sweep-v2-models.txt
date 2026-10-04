@@ -1,0 +1,17 @@
+opencode-go/longcat-2.5-preview-free
+opencode-go/space-bunny-free
+openrouter/cohere/north-mini-code:free
+openrouter/dots-studio/dots-3-note-preview:free
+openrouter/inclusionai/ling-3.0-flash-sante:free
+openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
+openrouter/nvidia/nemotron-3-super-120b-a12b:free
+openrouter/qwen/qwen3.8-27b:free
+openrouter/thinkingmachines/inkling:free
+openrouter/thinkingmachines/inkling-small:free
+openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free
+openrouter/poolside/laguna-s-2.1:free
+openrouter/liquid/lfm-2.5-2.6b:free
+openrouter/poolside/laguna-xs-2.1:free
+openrouter/nvidia/nemotron-3.5-lightning:free
+openrouter/inclusionai/ling-3.1-flash
+openrouter/stealth/space-bunny-alpha

@@ -8,7 +8,7 @@ from pathlib import Path
 
 def schedule(payload: dict) -> dict:
     jobs = payload.get("jobs", [])
-    # no validation of deadlines used — bug: deadlines are ignored entirely
+    # BUG: preserve input order and ignore validation and dependencies.
     order = [job["id"] for job in jobs]
     finish = 0
     late = 0

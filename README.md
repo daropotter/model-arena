@@ -3,9 +3,10 @@
 Run local LLMs through [opencode](https://opencode.ai) on graded agentic
 tasks, fully sandboxed, and get a pass/fail scorecard per model.
 
-Every run is isolated: the model sees only the task's workspace, has no
-internet access, and cannot touch the hidden grader. It either makes the
-workspace pass the task's hidden test suite or it does not.
+Every local run is isolated: the model sees only the task workspace, has no
+internet access, and cannot touch the hidden grader. Hosted providers require
+internet access and are therefore a separate, weaker trust boundary; see
+"Limitations" below.
 
 ## Why
 
@@ -39,9 +40,9 @@ before letting them touch real code.
                                    └─────────────────────────────────────┘
                                                │ after the agent exits
                                                ▼
-                                   grader container (--network none)
-                                   task workspace mounted read-only
-                                   hidden tests + reference comparison
+                                    grader container (--network none)
+                                    grader UID 0, submission UID 1000
+                                    hidden tests/result inaccessible to code
 ```
 
 - **Isolation**: the agent container is attached to an `--internal` docker
@@ -52,12 +53,18 @@ before letting them touch real code.
   tests). If the model modifies or deletes one of them, the run is failed
   automatically without grading.
 - **Grading**: each task ships `grader/grade.py`, a hidden test suite that
-  runs against the finished workspace read-only. Graders compare against
-  reference implementations or drive the CLI through cases the model never
-  saw.
+  runs against the finished workspace read-only. The grader and its result
+  live in root-only directories; every submitted program is dropped to UID
+  1000 and cannot read either. Graders compare against reference
+  implementations or drive the CLI through cases the model never saw.
 - **Metrics**: the runner parses opencode's `--format json` event stream and
   records tokens (in/out), steps, tool calls, tool errors, duration, timeouts
   and every file touched.
+- **Result validity**: provider/API, runner and grader failures are recorded
+  separately and excluded from quality averages. The latest valid attempt is
+  preferred over a later failed retry.
+- **Provenance**: schema-v2 records include suite ID, task/starter/grader,
+  prompt, runner and Docker hashes, image ID, timeout policy and model options.
 
 ## Design principles
 
@@ -98,6 +105,29 @@ available (the Dockerfile builds from `node:22-bookworm-slim` and installs
 the rest). Override the tagged image with `ARENA_IMAGE` and edit
 `docker/Dockerfile` if your base differs.
 
+## Tests
+
+The repository suite is stdlib `unittest` (no pytest needed):
+
+```bash
+python3 tests/run_all.py             # all groups
+python3 tests/run_all.py unit        # outcomes, aggregation, provenance, deadlines
+python3 tests/run_all.py integration # docker isolation, lifecycle, proxy, regrade
+python3 tests/run_all.py oracles     # independent cross-checks of task oracles
+```
+
+- `unit/` — outcome/validity classification, repeat aggregation, report merge,
+  CSV round-trip, provenance matching, and the agent supervision state machine.
+- `integration/` — adversarial grader isolation (a probe tries every known way
+  to read the hidden grader or forge a result), container limits/timeouts and
+  cleanup, the restricted Ollama inference proxy, and regrade integrity. Docker
+  tests skip automatically when docker is unavailable.
+- `oracles/` — independent verification that does not import the shipped
+  solutions: regex checked against a generated NFA, scheduler against
+  brute-force permutations, merge against hand-computed cases, interpreter
+  metamorphic tests, codec hand-built frames, and a filedock manifest-only
+  cheat that must fail.
+
 ## Usage
 
 ```bash
@@ -121,6 +151,10 @@ EOF
 python3 runner/arena.py --models-file models.txt --timeout 900
 ```
 
+Repetitions are stored as separate attempts under one `batch_id`. Reports use
+the batch mean score, all-repeats pass status and median duration while
+retaining the individual scores for variance analysis.
+
 Output:
 
 - `results/report.md` and `results/report.csv` — pass/fail matrix plus
@@ -132,7 +166,7 @@ Output:
 - `results/analysis.md` — failure-mode breakdown per model/task.
 - `results/<timestamp>__<task>__<model>/` — the full evidence: `events.jsonl`
   (raw opencode stream), `stderr.log`, `record.json`, `grade/result.json`,
-  and the `workspace` path with the final state for post-mortem.
+  and a content-hashed `submission/` snapshot for post-mortem and regrading.
 
 ## Tasks
 
@@ -149,6 +183,10 @@ Output:
 | `datajanitor` | hard | messy CSV normalization: BOM, repeated headers, multi-format amounts/dates, duplicates, idempotency | unseen exports, byte-exact CSV + report comparison |
 | `generator` | hard | reverse-engineering: recover an LCG + output permutation from samples | unseen seeds, offsets beyond samples, 500-step exactness |
 | `scheduler` | hard | algorithm design: minimize late jobs with deadlines + dependencies | unseen instances incl. anti-greedy, cycles must be rejected |
+| `interpreter` | hard | lexical scoping, closures and strict AST validation | capture/shadowing, malformed nodes and runtime type errors |
+| `regex` | hard | parser plus greedy matching with full backtracking | alternatives/groups/stars, classes and malformed patterns |
+| `merge` | hard | deterministic base-coordinate three-way line merge | insertions, deletions, repeated lines and conflict regions |
+| `kvstore` | hard | crash-safe JSON key-value store: WAL records, atomic batches, recovery | WAL-only recovery, torn tails, corrupted records, null vs missing |
 
 Each task directory:
 
@@ -196,6 +234,7 @@ Design rules that keep tasks discriminative:
 |---|---|---|
 | `ARENA_IMAGE` | `model-arena-agent` | agent/grader image |
 | `ARENA_NETWORK` | `arena-net` | docker network (created as `--internal`) |
+| `ARENA_SUBNET` | `172.22.0.0/16` | verified subnet for the internal network |
 | `ARENA_GATEWAY` | `172.22.0.1` | bridge gateway hosting the proxy |
 | `ARENA_OLLAMA_PORT` | `11435` | proxy listen port |
 | `ARENA_MEMORY` / `ARENA_CPUS` | `6g` / `8` | container limits |
@@ -207,6 +246,9 @@ Design rules that keep tasks discriminative:
 | `ARENA_WARMUP_TIMEOUT` | `900` | seconds allowed for the pre-run model load |
 | `ARENA_SMOKE_TIMEOUT` | `900` | prescreen smoke limit, independent of `--timeout` |
 | `ARENA_HOSTED_NETWORK` | `bridge` | docker network for hosted (non-ollama) models |
+| `ARENA_GRADER_MEMORY` / `ARENA_GRADER_CPUS` | `1g` / `2` | grader limits |
+| `ARENA_GRADER_PIDS` / `ARENA_PIDS` | `128` / `256` | grader/agent PID limits |
+| `ARENA_SUITE_ID` | `model-arena-v2` | comparability cohort stored in records |
 
 ## Timeout model (updated 2026-09-25)
 
@@ -260,11 +302,16 @@ Rebuild the image after changes: `docker/build.sh`.
   the weights.
 - **Results are hardware-bound.** Token rates (and therefore any
   time-related observations) apply to the GPU they were measured on
-  (12 GB VRAM in the published results). Scores and passes are comparable
-  across hardware; durations are not.
+  (12 GB VRAM in the published results). Scores and passes are comparable only
+  within the same suite/protocol hashes; durations are not.
 - **The free Zen models are rate-limited** (HTTP 429 without
   `OPENCODE_API_KEY`) and can be slow; a run with 0 output tokens usually
   means the provider refused, not that the model is dumb.
+- **Hosted runs are not a secret-safe sandbox.** They need unrestricted
+  provider egress and opencode receives `OPENCODE_API_KEY`. Because the coding
+  agent can execute shell commands, do not run untrusted task content or an
+  untrusted provider model with a long-lived valuable key. Use a scoped key
+  and rotate it after experiments. Local Ollama runs do not receive this key.
 
 ## Troubleshooting
 
@@ -291,6 +338,7 @@ tasks/           one directory per task:
                    starter/     buggy/incomplete code + visible tests
                    grader/      hidden test suite (+ reference)
                    solution/    correct implementation (verify only)
+tests/           repository test suite (unit, integration, oracles)
 results/         run evidence + generated reports (git-ignored)
 ```
 
@@ -343,8 +391,9 @@ EOF
 **Run requirements:**
 - internet (hosted models; local ollama models stay on the isolated network),
 - `OPENCODE_API_KEY` in the environment — **without it the free tier returns
-  HTTP 429 `FreeUsageLimitError`**. The key is passed to the container as an
-  env var, never logged or persisted. The key from `auth.json` is not enough:
+  HTTP 429 `FreeUsageLimitError`**. The key is inherited by the container and
+  is visible to processes inside that hosted-run container; use a scoped key.
+  The key from `auth.json` is not enough:
   `FreeTierError: can only be used from within OpenCode`.
 - `bridge` instead of `arena-net` (the runner does this automatically for
   non-`ollama/*`).

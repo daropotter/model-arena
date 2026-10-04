@@ -12,8 +12,23 @@ PROMPT_FILE="$2"
 TIMEOUT_SEC="$3"
 OLLAMA_BASE_URL="${4:-http://172.22.0.1:11435/v1}"
 
+python3 - "$MODEL" <<'PY'
+import re
+import sys
+if not re.fullmatch(r"[A-Za-z0-9._:/+@-]+", sys.argv[1]):
+    raise SystemExit("invalid model identifier")
+PY
+
 CONFIG_DIR="$HOME/.config/opencode"
 mkdir -p "$CONFIG_DIR"
+
+# openai/* runs get a scoped copy of the host OpenAI OAuth session mounted at
+# /extra_auth.json (the API key has no credits; the subscription is OAuth).
+if [ -f /extra_auth.json ]; then
+  mkdir -p "$HOME/.local/share/opencode"
+  cp /extra_auth.json "$HOME/.local/share/opencode/auth.json"
+  chmod 600 "$HOME/.local/share/opencode/auth.json"
+fi
 
 case "$MODEL" in
   ollama/*)
@@ -46,7 +61,7 @@ case "$MODEL" in
   "permission": {
     "bash": "allow",
     "read": { "*": "allow", "*.env": "deny", "*.env.*": "deny" },
-    "external_directory": "allow"
+    "external_directory": "deny"
   }
 }
 EOF
@@ -59,7 +74,7 @@ EOF
   "permission": {
     "bash": "allow",
     "read": { "*": "allow", "*.env": "deny", "*.env.*": "deny" },
-    "external_directory": "allow"
+    "external_directory": "deny"
   }
 }
 EOF

@@ -100,6 +100,10 @@ def warmup(model: str, timeout: int = 300):
 
 def classify(record, run_dir: Path, warmup_ok: bool = True) -> tuple[str, str]:
     """Return (verdict, reason) for a smoke run."""
+    if record.get("run_outcome") in ("provider_error", "api_error", "runner_error",
+                                      "grader_error"):
+        return ("ERROR", f"inconclusive infrastructure failure: "
+                f"{record.get('run_outcome')}")
     if record["passed"]:
         return ("QUALIFIED", "solved the smoke task")
     events = run_dir / "events.jsonl"
@@ -159,8 +163,7 @@ def main():
     # Override with ARENA_SMOKE_TIMEOUT.
     smoke_timeout = int(os.environ.get("ARENA_SMOKE_TIMEOUT", "900"))
 
-    only_local = all(m.startswith("ollama/") for m in models)
-    if not args.report_only and only_local:
+    if not args.report_only and any(m.startswith("ollama/") for m in models):
         arena.ensure_network(arena.NETWORK)
         arena.ensure_proxy(arena.GATEWAY, arena.OLLAMA_PORT)
 
@@ -193,8 +196,8 @@ def main():
         warmup_ok, warmup_detail, _ = warmup(model, timeout=args.warmup_timeout)
         print(f"[prescreen] {model}: warmup: {warmup_detail}")
         if not warmup_ok:
-            entries.append({"model": model, "verdict": "EXCLUDED",
-                            "reason": f"too-big-for-hardware: {warmup_detail}",
+            entries.append({"model": model, "verdict": "ERROR",
+                            "reason": f"inconclusive warmup failure: {warmup_detail}",
                             "record": None})
             continue
         try:
@@ -219,6 +222,7 @@ def main():
         for e in entries:
             slim = {"model": e["model"], "verdict": e["verdict"],
                     "reason": e["reason"],
+                    "timestamp": datetime.now().astimezone().isoformat(),
                     "duration_s": e["record"]["duration_s"] if e["record"] else None,
                     "tool_calls": e["record"]["tool_calls"] if e["record"] else None,
                     "score": e["record"]["score"] if e["record"] else None}
@@ -253,7 +257,8 @@ def main():
 
     md = ["# prescreen of new models", ""]
     md.append(f"Time: {datetime.now().isoformat(timespec='seconds')}")
-    md.append("Task: `smoke` (sum numbers from a file), run limit from meta.json.")
+    md.append(f"Task: `smoke` (sum numbers from a file), run limit "
+              f"ARENA_SMOKE_TIMEOUT={smoke_timeout}s.")
     md.append("")
     for verdict in ("QUALIFIED", "BORDERLINE", "EXCLUDED", "ERROR"):
         group = [e for e in merged.values() if e["verdict"] == verdict]

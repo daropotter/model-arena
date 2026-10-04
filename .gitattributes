@@ -1,0 +1,2 @@
+# The merge task specification documents literal seven-character markers.
+tasks/merge/starter/SPEC.md conflict-marker-size=32

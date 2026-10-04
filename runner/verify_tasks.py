@@ -21,8 +21,17 @@ def grade_locally(task_dir: Path, workspace: Path) -> dict:
              str(workspace), str(out)],
             capture_output=True, text=True, timeout=300,
         )
-        if out.exists():
-            return json.loads(out.read_text())
+        if proc.returncode == 0 and out.exists():
+            try:
+                result = json.loads(out.read_text())
+                if type(result.get("passed")) is not bool:
+                    raise ValueError("passed is not boolean")
+                if type(result.get("score")) not in (int, float):
+                    raise ValueError("score is not numeric")
+                return result
+            except (json.JSONDecodeError, ValueError) as exc:
+                return {"passed": False, "score": 0.0,
+                        "detail": f"invalid grader result: {exc}"}
         return {"passed": False, "score": 0.0,
                 "detail": f"grader crashed rc={proc.returncode}: {proc.stderr[-400:]}"}
 
@@ -43,6 +52,10 @@ def build_variant(task_dir: Path, variant: str) -> Path:
 
 def main():
     failures = []
+    try:
+        baselines = json.loads((TASKS / "baselines.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        baselines = {}
     for task_dir in sorted(p for p in TASKS.iterdir() if (p / "meta.json").exists()):
         name = task_dir.name
         starter = build_variant(task_dir, "starter")
@@ -57,6 +70,14 @@ def main():
                   f"solution={r_solution['score']:.2f}")
             if not ok_starter:
                 print(f"    starter should fail: {r_starter['detail'][:200]}")
+                failures.append(name)
+            expected_floor = baselines.get(name)
+            # cronlog intentionally races concurrent processes; an unlocked
+            # starter can occasionally preserve one extra batch by luck.
+            if name != "cronlog" and (expected_floor is None or
+                                      abs(r_starter["score"] - expected_floor) > 1e-9):
+                print(f"    baseline drift: recorded={expected_floor!r}, "
+                      f"actual={r_starter['score']!r}")
                 failures.append(name)
             if not ok_solution:
                 print(f"    solution should pass: {r_solution['detail'][:200]}")

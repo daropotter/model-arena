@@ -48,6 +48,15 @@ INSTANCES = [
         {"id": "a", "duration": 5, "deadline": 3, "depends": []},
         {"id": "b", "duration": 5, "deadline": 100, "depends": []},
     ]}),
+    ("forward_dependency", {"jobs": [
+        {"id": "b", "duration": 2, "deadline": 5, "depends": ["a"]},
+        {"id": "a", "duration": 3, "deadline": 3, "depends": []},
+    ]}),
+    ("fork_uses_machine_elapsed", {"jobs": [
+        {"id": "root", "duration": 4, "deadline": 4, "depends": []},
+        {"id": "left", "duration": 4, "deadline": 8, "depends": ["root"]},
+        {"id": "right", "duration": 4, "deadline": 8, "depends": ["root"]},
+    ]}),
 ]
 
 INVALID = [
@@ -75,14 +84,25 @@ def run(workspace: Path, payload):
         in_path = tmp / "in.json"
         out_path = tmp / "out.json"
         in_path.write_text(json.dumps(payload))
-        proc = subprocess.run(
-            [sys.executable, str(workspace / "scheduler.py"),
-             str(in_path), str(out_path)],
-            capture_output=True, text=True, timeout=120,
-        )
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(workspace / "scheduler.py"),
+                 str(in_path), str(out_path)],
+                capture_output=True, text=True, timeout=15,
+            )
+        except subprocess.TimeoutExpired:
+            return None, None, "", False, "timed out"
+        except OSError as exc:
+            return None, None, "", False, str(exc)
         if proc.returncode != 0:
-            return None, proc.returncode
-        return json.loads(out_path.read_text()), proc.returncode
+            return None, proc.returncode, proc.stderr, out_path.exists(), ""
+        try:
+            if out_path.stat().st_size > 1_000_000:
+                raise ValueError("output too large")
+            got = json.loads(out_path.read_text())
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+            return None, 0, proc.stderr, out_path.exists(), str(exc)
+        return got, 0, proc.stderr, True, ""
 
 
 def main(workspace_arg: str, out_arg: str):
@@ -97,10 +117,10 @@ def main(workspace_arg: str, out_arg: str):
         total += 1
         want = schedule_reference(payload)
         ids, deps, dur, deadline = validate(payload)
-        got, rc = run(workspace, payload)
+        got, rc, _, _, run_error = run(workspace, payload)
         if got is None:
             results.append({"case": name, "passed": False,
-                            "detail": f"exit {rc}"})
+                            "detail": run_error or f"exit {rc}"})
             continue
         if not isinstance(got, dict) or set(got.get("order") or []) != set(ids) \
                 or "late" not in got:
@@ -131,13 +151,14 @@ def main(workspace_arg: str, out_arg: str):
 
     for name, payload in INVALID:
         total += 1
-        got, rc = run(workspace, payload)
-        if rc != 0:
+        got, rc, stderr, output_exists, run_error = run(workspace, payload)
+        if not run_error and rc == 1 and stderr.strip() == "error" \
+                and not output_exists:
             earned += 1
             results.append({"case": name, "passed": True, "detail": ""})
         else:
             results.append({"case": name, "passed": False,
-                            "detail": f"accepted invalid input: {got}"})
+                            "detail": run_error or f"invalid error contract: {got}"})
 
     score = earned / total if total else 0.0
     passed = all(r["passed"] for r in results)

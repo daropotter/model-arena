@@ -32,7 +32,8 @@ Exit 0 on success. On invalid input print `error` to stderr and exit 1.
 ## Contract
 
 The machine runs one job at a time, starting at time 0, with no idle time
-before the last job finishes (the schedule is contiguous).
+before the last job finishes. Input list order has no scheduling meaning, so a
+dependency may refer to a job listed later in the input.
 
 The schedule must:
 
@@ -41,10 +42,10 @@ The schedule must:
 2. **Respect nothing else but dependencies** — there is no release-time
    constraint other than time 0 and dependencies.
 3. **Be contiguous**: the first job starts at 0, and each following job
-   starts exactly when the previous one finishes. With dependencies this
-   may force the machine to stay idle while waiting — in that case the
-   schedule is still represented as one ordered list and idle gaps are
-   allowed only when every remaining job is blocked by dependencies.
+   starts exactly when the previous one finishes. Thus a job's finish time is
+   the sum of the durations of that job and every job before it in `order`.
+   A valid acyclic dependency graph always has an available next job, so no
+   idle gaps are inserted.
 4. **Minimize the number of late jobs**: a job is late when
    `finish > deadline`. Among schedules with the fewest late jobs, any
    one is accepted (ties are free), but the fewest-late guarantee is
@@ -68,5 +69,7 @@ The schedule must:
 
 ## Invalid inputs
 
-Duplicate ids, missing id/duration/deadline, non-positive duration,
-unknown dependency target, dependency cycles — all `error`, exit 1.
+Duplicate ids, missing id/duration/deadline, non-positive duration or
+deadline, unknown dependency target, dependency cycles — all `error`, exit 1.
+Dependency targets are validated after all job ids have been collected, so a
+reference to a later input entry is valid.
