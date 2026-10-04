@@ -22,12 +22,14 @@ Exit 0 on success. On invalid input print `error` to stderr and exit 1.
 }
 ```
 
+`jobs` must be a non-empty list of job objects. Each job has:
+
 - `id`: unique non-empty string.
 - `duration`: positive integer.
 - `deadline`: positive integer (the job must finish no later than this).
-- `depends`: list of ids; the job may not start before every listed job
-  has finished. A job may not depend on itself, directly or transitively
-  (a cycle is an error).
+- `depends`: optional list of ids (defaults to `[]`); the job may not start
+  before every listed job has finished. A job may not depend on itself,
+  directly or transitively (a cycle is an error).
 
 ## Contract
 
@@ -69,7 +71,9 @@ The schedule must:
 
 ## Invalid inputs
 
-Duplicate ids, missing id/duration/deadline, non-positive duration or
-deadline, unknown dependency target, dependency cycles — all `error`, exit 1.
+Empty or non-list `jobs`, duplicate ids, missing id/duration/deadline,
+non-integer or non-positive duration/deadline (including JSON booleans),
+malformed dependency lists, unknown dependency targets and dependency cycles
+are all `error`, exit 1.
 Dependency targets are validated after all job ids have been collected, so a
 reference to a later input entry is valid.

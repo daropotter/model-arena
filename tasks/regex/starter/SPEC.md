@@ -96,4 +96,5 @@ fails:
 
 Unbalanced parentheses, an empty or unterminated character class, a `*` with
 nothing to quantify (leading `*`), or a dangling `\\` at end of pattern are
-all errors: print `error` to stderr and exit 1.
+all errors: print exactly `error` to stderr, exit 1, and do not create the
+output file.

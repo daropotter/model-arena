@@ -13,4 +13,4 @@ contract: the docstring and README are. Use relative paths only.
 Verify your fix by running:
 
     python3 sumtool.py '1.5, 2, -3'   # see README for expected output
-    python3 -m pytest tests/ -q
+    python3 tests/test_visible.py

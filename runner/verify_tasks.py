@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""Verify every task's grader: the starter must fail, the reference solution
-must pass. Runs entirely locally (no docker, no LLM) -- safe and fast."""
+"""Verify every task's grader and canonical starter floor.
+
+The starter must fail and the reference solution must pass. Runs the task
+programs locally without Docker or an LLM; container isolation is not checked.
+"""
 
 import json
 import shutil

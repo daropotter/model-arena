@@ -27,6 +27,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "runner"))
 import arena  # noqa: E402
+import run_lock  # noqa: E402
 
 
 VRAM_GB = float(os.environ.get("ARENA_VRAM_GB", "12"))
@@ -292,4 +293,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    with run_lock.exclusive(ROOT):
+        main()

@@ -13,7 +13,8 @@ python3 merge.py <in.json> <out.json>
 list of lines (strings, no trailing newline). Produce a three-way merge and
 write the result as a list of lines to `out.json`, followed by a newline.
 
-Exit 0 on success. On malformed input, print `error` to stderr and exit 1.
+Exit 0 on success. On malformed input, print exactly `error` to stderr,
+exit 1, and do not create the output file.
 
 ## Three-way merge
 

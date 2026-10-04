@@ -98,4 +98,5 @@ Two consequences that are graded exactly:
 
 Undefined variable, calling a non-closure, arity mismatch, division by zero,
 malformed JSON, unknown expression type, and a non-integer where an integer is
-required are all errors: print `error` to stderr and exit 1.
+required are all errors: print exactly `error` to stderr, exit 1, and do not
+create the output file.

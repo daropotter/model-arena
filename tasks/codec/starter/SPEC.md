@@ -53,5 +53,6 @@ string.
 
 ## Errors
 
-On any error print `error` to stderr and exit 1. The exact message on
-stderr is not graded; the exit code and the absence of the output file are.
+On any error print exactly `error` to stderr (a trailing newline is allowed),
+exit 1, and do not create the output file. The message, exit code and absence
+of the output file are all graded.

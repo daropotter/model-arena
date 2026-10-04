@@ -81,12 +81,12 @@ Exit code 0 on success. The input and output files are JSON.
 ```json
 {
   "transactions": [
-    {"id": "t1", "fee": "0.10"}
+    {"id": "t1", "fee": "0.12"}
   ],
   "accounts": {
     "alice": {"balance": "-12.50", "count": 1}
   },
-  "fees_total": "0.10"
+  "fees_total": "0.12"
 }
 ```
 

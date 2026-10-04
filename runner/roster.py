@@ -4,11 +4,12 @@
 Reads results/ (main sweep) and optionally results-ab/ (tool-instruction A/B),
 applies evidence-based exclusion rules, and writes results/roster.md.
 
-Exclusion rules (in order):
-  1. no-tool-support   - ollama rejects the model with tools at all
-  2. tool-hallucinator - never emitted a real tool call in ANY run
-  3. too-big-for-hw    - repeated timeouts with no output on tested hardware
-  4. ab-unfixable      - the tool-use instructions did not fix rule 2 or 3
+Verdict rules use valid quality evidence:
+  - ERROR when no valid attempt exists (including provider/tool API failures).
+  - EXCLUDED for no-action models, zero-output timeouts, or predominantly
+    timed-out runs with no passes.
+  - QUALIFIED when the model acts or passes without meeting an exclusion rule.
+A/B tool-use runs add evidence to the verdict; they are not a separate rule.
 
 Usage: python3 runner/roster.py [--results DIR] [--ab DIR]
 """

@@ -6,7 +6,7 @@ grader against it (in docker, workspace read-only), and rewrites the record's
 score/passed/detail. Also updates all result reports.
 
 Usage:
-  python3 runner/regrade.py                      # every run with a live workspace
+  python3 runner/regrade.py                      # valid repeats in selected batches
   python3 runner/regrade.py --task datajanitor
   python3 runner/regrade.py --task datajanitor --dry-run
 """
@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "runner"))
 import arena  # noqa: E402
 import reporting  # noqa: E402
+import run_lock  # noqa: E402
 
 
 def latest_records(results_root: Path):
@@ -53,6 +54,8 @@ def main():
     ap.add_argument("--results", default=str(ROOT / "results"))
     ap.add_argument("--tasks", default=str(ROOT / "tasks"))
     ap.add_argument("--task", nargs="*", default=None)
+    ap.add_argument("--models", nargs="+", default=None,
+                    help="re-grade only the specified model identifiers")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--no-reports", action="store_true",
                     help="do not regenerate report.md and derived reports")
@@ -67,6 +70,8 @@ def main():
     changed_count = 0
     for record_path, record in records:
         model, task = record["model"], record["task"]
+        if args.models and model not in args.models:
+            continue
         if args.task and task not in args.task:
             continue
         if task == "smoke":
@@ -163,4 +168,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    with run_lock.exclusive(ROOT):
+        main()

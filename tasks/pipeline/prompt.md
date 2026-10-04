@@ -17,4 +17,4 @@ Verify your fix by running the round trip yourself:
 
     python3 pack.py in.json out.pipe
     python3 unpack.py out.pipe back.json
-    python3 -m pytest tests/ -q
+    python3 tests/test_visible.py

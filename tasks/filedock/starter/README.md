@@ -39,8 +39,8 @@ python3 organize.py <inbox_dir> <manifest_path>
 
 ```json
 {
-  "moved": ["report-20260115.txt", "..."],
-  "duplicates": ["report-20260116-b.txt"]
+  "moved": ["report-20260115.txt"],
+  "duplicates": ["report-20260116.txt"]
 }
 ```
 

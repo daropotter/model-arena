@@ -59,13 +59,14 @@ must migrate it **in place**:
   historical value to recover).
 - Unknown extra fields are preserved as-is.
 
-After any command, the store on disk must be version 2. A version 2 store is
-never touched by migration (existing timestamps and values are preserved
-exactly).
+After any successful command, the store on disk must be version 2. A version
+2 store is never touched by migration (existing timestamps and values are
+preserved exactly).
 
 ## CLI contract
 
-All commands print a single JSON object to stdout and exit 0 on success.
+Commands print JSON to stdout and exit 0 on success: `list` returns an array,
+and the other commands return an object.
 On any user error (unknown command, missing id, invalid argument, corrupted
 store, bad date) print a single JSON object `{"error": "<message>"}` to stdout
 and exit 1. Never write a traceback to stderr.

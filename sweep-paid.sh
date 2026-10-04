@@ -1,8 +1,8 @@
 #!/bin/bash
 # Comparison sweep of paid opencode-go models (deepseek-v4.1-flash, deepseek-v4-pro,
-# gpt-6-luna). Same 14 scored tasks as the free sweep, so results are comparable.
-# OpenAIs gpt-6.1-sol is not runnable: the API key has no credits, Zen has no
-# funds, and Go does not carry it.
+# gpt-6-luna) and the OpenAI model in sweep-paid-models.txt. Runs the same
+# 14 scored tasks as the free sweep. OpenAI can use the runner's scoped copy
+# of the local opencode auth entry or OPENAI_API_KEY when set.
 set -u
 cd "$(dirname "$0")"
 LOG=sweep-paid.log

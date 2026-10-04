@@ -32,9 +32,10 @@ from pathlib import Path
 from uuid import uuid4
 
 try:
-    from . import reporting
+    from . import reporting, run_lock
 except ImportError:
     import reporting
+    import run_lock
 
 ROOT = Path(__file__).resolve().parent.parent
 IMAGE = os.environ.get("ARENA_IMAGE", "model-arena-agent")
@@ -282,7 +283,7 @@ def run_agent(model: str, scratch: Path, prompt: str, timeout: int, log_dir: Pat
         mounts += ["-v", f"{openai_auth}:/extra_auth.json:ro"]
     # Local models run on the isolated network and reach ollama through the host
     # proxy. Hosted models (opencode Zen and friends) need real internet, so they
-    # go on the default bridge; they need no credentials.
+    # go on the configured hosted network with provider credentials when set.
     if is_local_model(model):
         network = NETWORK
     else:
@@ -859,4 +860,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    with run_lock.exclusive(ROOT):
+        main()

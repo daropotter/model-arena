@@ -17,4 +17,4 @@ Do not modify SPEC.md or tests/. Use relative paths only.
 Verify your fix:
 
     python3 match.py in.json out.json
-    python3 -m pytest tests/ -q
+    python3 tests/test_visible.py

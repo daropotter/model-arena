@@ -299,7 +299,7 @@ def model_section(model, runs, meta, verdict, evidence, ab_runs, smoke_runs,
         f"out-tokens {out_tok:,} · tool calls {tools} ({tool_err} errors)")
     lines.append("")
 
-    # per-task table (best run per task)
+    # Per-task table of latest-valid batch summaries selected by the loader.
     lines.append("| task | status | score | time | run date | out-tok | tool calls |")
     lines.append("|---|---|---|---|---|---|---|")
     by_task = {}
@@ -438,8 +438,8 @@ def build_report(scored, smoke, ab, prescreen_entries, meta, floors):
     # how to read
     lines.append("## How to read this report")
     lines.append("")
-    lines.append("- **Verdict** is the decision from `roster.py`: qualified (uses "
-                 "tools) or excluded (with reason and evidence).")
+    lines.append("- **Verdict** uses the decision from `roster.py` and valid quality "
+                 "evidence; infrastructure failures are inconclusive.")
     lines.append("- **Run status** uses one precedence order. Infrastructure errors "
                  "(`provider`, `API`, `runner`, `grader`) make an attempt invalid and "
                  "exclude its score from averages and coverage. `PASS` is used only for "
@@ -449,13 +449,17 @@ def build_report(scored, smoke, ab, prescreen_entries, meta, floors):
     lines.append("  - `fake tool call (as text)` — printed the tool call as text "
                  "(e.g. `{\"type\":\"write\",...}`), nothing happened;")
     lines.append("  - `no action` — neither tools nor text;")
-    lines.append("  - `timeout` — exceeded the configured time limit;")
+    lines.append("  - `timeout` — stopped by runner supervision after the soft deadline;")
     lines.append("  - infrastructure-error labels identify invalid attempts.")
-    lines.append("- **Selection** prefers the latest valid attempt over any later "
-                 "invalid retry. Historical record files remain unchanged.")
+    lines.append("- **Selection** prefers the latest valid batch over any later "
+                 "invalid retry. Repeated batches use valid-repeat mean scores, "
+                 "all-valid-repeats pass status and median duration. Historical "
+                 "record files remain unchanged.")
     lines.append(f"- **Ranking** is primary only for schema-v2 records from "
                  f"`{reporting.CURRENT_SUITE_ID}` with full provenance and task "
-                 "coverage. Older records are marked legacy.")
+                 "coverage of the observed task set. Older records are marked legacy. "
+                 "The label checks provenance keys, not digest equality; inspect "
+                 "hashes before comparing evaluation protocols.")
     lines.append("- `<details>` sections expand the run: grading reasons, the "
                  "model's last message, and paths to raw data.")
     lines.append("")
@@ -581,8 +585,9 @@ def build_report(scored, smoke, ab, prescreen_entries, meta, floors):
     lines.append("- `.../grade/result.json` — the grader verdict, broken down per case;")
     lines.append("- `.../stderr.log` — container stderr (e.g. `Killed` = SIGKILL "
                  "past the limit);")
-    lines.append("- run workspace: the path in the details section (default "
-                 "`/tmp/model-arena/...` — gone after a host reboot).")
+    lines.append("- `.../submission/` — saved workspace, retained with the run "
+                 "for inspection and regrading; legacy runs may only point "
+                 "to a `/tmp/model-arena/...` workspace that disappears on reboot.")
     lines.append("")
     lines.append("Summary reports: `results/report.md`, `results/analysis.md`, "
                  "`results/roster.md`, `results-prescreen/prescreen.md`, "

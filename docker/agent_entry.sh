@@ -23,7 +23,7 @@ CONFIG_DIR="$HOME/.config/opencode"
 mkdir -p "$CONFIG_DIR"
 
 # openai/* runs get a scoped copy of the host OpenAI OAuth session mounted at
-# /extra_auth.json (the API key has no credits; the subscription is OAuth).
+# /extra_auth.json when the host opencode auth store has an OpenAI entry.
 if [ -f /extra_auth.json ]; then
   mkdir -p "$HOME/.local/share/opencode"
   cp /extra_auth.json "$HOME/.local/share/opencode/auth.json"
@@ -95,7 +95,7 @@ cat >> "$CONFIG_DIR/AGENTS.md" <<'EOF'
 - Finish the task, not just a draft. Read SPEC.md completely before writing
   code; every rule in it is graded, hidden tests cover what you have not seen.
 - Verify your work yourself before stopping: run the visible tests
-  (`python3 -m pytest tests/ -q` when a tests/ directory exists) and fix every
+  (`python3 tests/test_visible.py` when that file exists) and fix every
   failure. A task is done when your code matches the spec AND the tests pass.
 - Edit files by calling the `edit` tool with the exact current text of the
   region you are changing. If an edit fails because the text is not found,

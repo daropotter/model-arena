@@ -19,4 +19,4 @@ Verify your fix by round-tripping a few payloads yourself:
 
     python3 encode.py in.json out.bin
     python3 decode.py out.bin back.json
-    python3 -m pytest tests/ -q
+    python3 tests/test_visible.py

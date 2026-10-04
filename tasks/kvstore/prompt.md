@@ -24,4 +24,4 @@ Verify your fix:
 
     python3 kv.py ./store put k '{"n": 1}'
     python3 kv.py ./store get k
-    python3 -m pytest tests/ -q
+    python3 tests/test_visible.py
