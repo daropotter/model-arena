@@ -229,11 +229,40 @@ registry. Credentials are inherited only when present:
 | hosted providers, including `opencode/*` and `opencode-go/*` | `OPENCODE_API_KEY`, when set |
 | `openrouter/*` | `OPENROUTER_API_KEY` |
 | `openai/*` | `OPENAI_API_KEY` and/or a temporary copy of only the `openai` entry from `~/.local/share/opencode/auth.json` |
+| `claude/*` | `CLAUDE_CODE_OAUTH_TOKEN` (Claude subscription; see below) |
 
 The temporary OpenAI auth file is removed after the run. All supplied
 credentials are accessible to code inside that hosted agent container; see
 "Limitations". The checked-in model lists are experiment inputs, and provider
 availability, pricing and quotas may change.
+
+### Anthropic models through Claude Code
+
+`claude/<model>[@effort]` runs the task with Claude Code (`claude -p`) instead
+of opencode, in the same sandbox, on the Claude subscription:
+
+```bash
+claude setup-token                        # once; prints a long-lived OAuth token
+export CLAUDE_CODE_OAUTH_TOKEN=...
+python3 runner/arena.py --models claude/opus claude/sonnet --task ledger
+python3 runner/arena.py --models claude/claude-opus-5-5@high   # pinned id + effort
+```
+
+`<model>` is anything `claude --model` accepts (alias or full id); the
+optional `@effort` becomes `--effort`. The runner refuses `claude/*` models
+without `CLAUDE_CODE_OAUTH_TOKEN` and never forwards `ANTHROPIC_API_KEY`, so
+a run cannot fall back to API billing. Inside the container Claude Code gets
+the same ground rules as opencode (as `~/.claude/CLAUDE.md`), runs with
+permissions bypassed, no MCP servers, and `WebSearch`/`WebFetch` disabled.
+
+Claude Code's raw `stream-json` output is kept as `claude-events.jsonl`; the
+runner translates it into opencode's event schema in `events.jsonl` (tool
+names lower-cased, `input` tokens exclusive of cache), so metrics and reports
+work unchanged. If the subscription's usage limit is hit during a run, the
+attempt is recorded as `provider_error` and excluded from quality averages.
+Records carry `provenance.agent` (`claude` or `opencode`); note that
+comparisons across the two harnesses measure model + harness together. The
+Claude Code version is pinned in the Dockerfile (`CLAUDE_CODE_VERSION`).
 
 ### Prescreen and sweep scripts
 
@@ -524,7 +553,8 @@ docker/          Dockerfile, image build, agent entry and hidden-grader isolatio
 runner/          arena.py (the sweep), prescreen.py, roster.py,
                  report_models.py, analyze.py, regrade.py,
                  verify_tasks.py, ollama_proxy.py, reporting.py,
-                 complete_nonfree.py, run_lock.py
+                 complete_nonfree.py, run_lock.py,
+                 claude_events.py (Claude Code -> opencode event schema)
 tasks/           baselines.json and one directory per task:
                    meta.json    name, timeout, difficulty, protected paths
                    prompt.md    what the agent is told

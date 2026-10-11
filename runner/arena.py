@@ -32,8 +32,9 @@ from pathlib import Path
 from uuid import uuid4
 
 try:
-    from . import reporting, run_lock
+    from . import claude_events, reporting, run_lock
 except ImportError:
+    import claude_events
     import reporting
     import run_lock
 
@@ -193,6 +194,29 @@ def is_local_model(model: str) -> bool:
     return model.startswith("ollama/")
 
 
+def agent_backend(model: str) -> str:
+    """Agent harness driving the model: `claude` (Claude Code) or `opencode`.
+
+    claude/<model>[@effort] runs Claude Code on the Claude subscription, e.g.
+    claude/opus, claude/claude-sonnet-5-5, claude/claude-opus-5-5@high.
+    Everything else goes through opencode.
+    """
+    return "claude" if model.startswith("claude/") else "opencode"
+
+
+def require_claude_auth(models) -> None:
+    """claude/* runs authenticate only with a subscription OAuth token.
+
+    ANTHROPIC_API_KEY is never forwarded: a run must not silently bill the
+    API instead of the subscription.
+    """
+    if any(agent_backend(m) == "claude" for m in models) \
+            and not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        raise SystemExit(
+            "claude/* models need CLAUDE_CODE_OAUTH_TOKEN (create one with "
+            "`claude setup-token`)")
+
+
 def validate_model_name(model: str) -> None:
     if not re.fullmatch(r"[A-Za-z0-9._:/+@-]+", model):
         raise SystemExit(f"invalid model identifier: {model!r}")
@@ -293,7 +317,10 @@ def run_agent(model: str, scratch: Path, prompt: str, timeout: int, log_dir: Pat
     # inside opencode, and OPENCODE_API_KEY lifts the free limit. OpenRouter
     # free models authenticate with OPENROUTER_API_KEY. Pass them through when
     # present; never log or persist them.
-    if not is_local_model(model):
+    if agent_backend(model) == "claude":
+        if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+            env_args += ["-e", "CLAUDE_CODE_OAUTH_TOKEN"]
+    elif not is_local_model(model):
         api_key = os.environ.get("OPENCODE_API_KEY")
         if api_key:
             env_args += ["-e", "OPENCODE_API_KEY"]
@@ -359,6 +386,12 @@ def run_agent(model: str, scratch: Path, prompt: str, timeout: int, log_dir: Pat
     finally:
         if openai_auth:
             openai_auth.unlink(missing_ok=True)
+    if agent_backend(model) == "claude":
+        # Keep Claude Code's raw stream; downstream tools read the
+        # opencode-style translation.
+        raw_path = log_dir / "claude-events.jsonl"
+        events_path.replace(raw_path)
+        claude_events.normalize_file(raw_path, events_path)
     return rc, time.time() - start, termination
 
 
@@ -414,6 +447,7 @@ def parse_events(events_path: Path) -> dict:
         "tokens_input": 0, "tokens_output": 0, "tokens_reasoning": 0,
         "steps": 0, "tool_calls": 0, "tool_errors": 0, "tool_names": {},
         "text_chars": 0, "session_ids": set(), "api_errors": 0,
+        "usage_limited": False,
     }
     if not events_path.exists():
         return {**stats, "session_ids": []}
@@ -447,6 +481,9 @@ def parse_events(events_path: Path) -> dict:
                 stats["text_chars"] += len(part.get("text", "") or "")
             elif etype == "error":
                 stats["api_errors"] += 1
+                error = ev.get("error") if isinstance(ev.get("error"), dict) else {}
+                if error.get("name") == "UsageLimitError":
+                    stats["usage_limited"] = True
     stats["session_ids"] = sorted(stats["session_ids"])
     return stats
 
@@ -563,7 +600,15 @@ def run_pair(model: str, task: dict, tasks_dir: Path, results_root: Path,
 
     provider_failure = (stats["api_errors"] > 0 and stats["tool_calls"] == 0
                         and stats["tokens_output"] == 0)
-    if provider_failure:
+    if stats["usage_limited"]:
+        # The subscription stopped serving mid-run: the attempt says nothing
+        # about the model, so it is invalid rather than a failed task.
+        grade_result = {
+            "passed": False, "score": 0.0,
+            "detail": "provider usage/rate limit reached during the run",
+        }
+        run_outcome = "provider_error"
+    elif provider_failure:
         grade_result = {
             "passed": False, "score": 0.0,
             "detail": "provider/API failure before the model acted",
@@ -607,6 +652,7 @@ def run_pair(model: str, task: dict, tasks_dir: Path, results_root: Path,
         "post_deadline_s": int(os.environ.get("ARENA_POST_DEADLINE", "1800")),
         "no_think": os.environ.get("ARENA_NO_THINK") == "1",
         "model_options": os.environ.get("ARENA_MODEL_OPTS", ""),
+        "agent": agent_backend(model),
     }
 
     record = {
@@ -742,7 +788,7 @@ def write_report(records, results_root: Path) -> Path:
     return md_path
 
 
-def main():
+def build_parser():
     ap = argparse.ArgumentParser(description="model-arena runner")
     ap.add_argument("--tasks", default=str(ROOT / "tasks"))
     ap.add_argument("--models", nargs="*", default=[])
@@ -764,7 +810,29 @@ def main():
                     help="keep earlier runs from --results and refresh only the "
                          "models/tasks in this invocation")
     ap.add_argument("--list", action="store_true")
-    args = ap.parse_args()
+    return ap
+
+
+def collect_models(args):
+    models = list(args.models)
+    if args.models_file:
+        models += [l.strip() for l in Path(args.models_file).read_text().splitlines()
+                   if l.strip() and not l.startswith("#")]
+    return models
+
+
+def needs_host_lock(models) -> bool:
+    """True when a sweep uses local models and shares this host's GPU.
+
+    Hosted-only sweeps (opencode Zen, OpenRouter, OpenAI, claude/*) run in
+    parallel with the local completion queue instead of serializing on the
+    host lock.
+    """
+    return any(is_local_model(m) for m in models)
+
+
+def main():
+    args = build_parser().parse_args()
 
     tasks_dir = Path(args.tasks)
     results_root = Path(args.results).resolve()
@@ -785,14 +853,12 @@ def main():
             print("  (ollama not found)")
         return
 
-    models = list(args.models)
-    if args.models_file:
-        models += [l.strip() for l in Path(args.models_file).read_text().splitlines()
-                   if l.strip() and not l.startswith("#")]
+    models = collect_models(args)
     if not models:
         raise SystemExit("no models given (use --models or --models-file)")
     for model in models:
         validate_model_name(model)
+    require_claude_auth(models)
 
     if args.task:
         tasks = [t for t in tasks if t["name"] in args.task]
@@ -860,5 +926,11 @@ def main():
 
 
 if __name__ == "__main__":
-    with run_lock.exclusive(ROOT):
+    # Hosted-only sweeps do not touch the shared GPU, so they run in parallel
+    # with the local completion queue instead of waiting for the host lock.
+    _args = build_parser().parse_args()
+    if needs_host_lock(collect_models(_args)):
+        with run_lock.exclusive(ROOT):
+            main()
+    else:
         main()

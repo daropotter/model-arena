@@ -3,6 +3,9 @@ FROM node:22-bookworm-slim
 # opencode is pinned to a known-good release; bump with
 #   ./docker/build.sh <version>   (e.g. ./docker/build.sh 1.18.32)
 ARG OPENCODE_VERSION=1.18.32
+# Claude Code drives claude/* models (subscription auth); bump with
+#   CLAUDE_CODE_VERSION=<version> ./docker/build.sh
+ARG CLAUDE_CODE_VERSION=2.1.289
 ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -11,7 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf "$(command -v fdfind)" /usr/local/bin/fd
 
-RUN npm install -g "opencode-ai@${OPENCODE_VERSION}" && npm cache clean --force
+RUN npm install -g "opencode-ai@${OPENCODE_VERSION}" \
+        "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    && npm cache clean --force
 
 RUN mkdir -p /home/opencode/.config/opencode \
              /home/opencode/.local/share/opencode \
