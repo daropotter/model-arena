@@ -1,0 +1,22 @@
+{
+  "columns": [
+    {
+      "key": "sku",
+      "label": "SKU"
+    },
+    {
+      "key": "qty",
+      "label": "Ilość"
+    }
+  ],
+  "rows": [
+    {
+      "sku": "P,1",
+      "qty": 0
+    },
+    {
+      "sku": "A",
+      "qty": 4
+    }
+  ]
+}

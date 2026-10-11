@@ -396,6 +396,33 @@ tasks/<name>/
 The current suite contains 15 tasks including `smoke`. `roster.md` and
 `analysis.md` also break passes down by difficulty tier.
 
+An opt-in [Dispatch migration benchmark](tasks-frontier/dispatch-migration/README.md)
+adds 64 functional and procedural obligations: notes before edits, on-demand
+skills, current verification receipts, reversible release, and eight no-open
+rules. It uses a dedicated FUSE observer and `python3 runner/frontier.py`,
+with separate results and protocol provenance. It is outside the ordinary
+task sweep. See its README for reference controls, model runs and regrading.
+
+The [Minefield v2 variant](tasks-frontier/dispatch-minefield/README.md) raises
+this to 192 obligations, eight distinct tenant policies, two artifact-bound
+stages, recurrent evidence invalidation, classified canary retries and 24
+no-open paths. Select it with `--task dispatch-minefield`; it has a separate
+suite ID and scoring formula.
+
+The [Returns release benchmark](tasks-frontier/returns-release/README.md)
+tests one autonomous end-to-end delivery across 36 milestones. It builds
+and runs a standalone HTTP service and CLI, exercises a real SQLite
+upgrade, refunds, code rollback and redeployment with retained data.
+Scores include stage completion, the longest dependency-complete chain,
+user journeys and checks bound to the final artifact. Select it with
+`--task returns-release`; it is also outside ordinary task sweeps.
+
+The harder [Distributed returns v2](tasks-frontier/returns-distributed/README.md)
+adds a separate payment worker, an independent Node client, crash recovery,
+and a mandatory provider protocol change with queued refunds already in flight.
+It scores 48 milestones, 11 verification groups and the two-phase release
+on actual built artifacts. Select `--task returns-distributed`.
+
 ## Adding a task
 
 1. `tasks/<name>/meta.json` with `name`, `title`, `timeout`, `protected`.
@@ -737,3 +764,19 @@ is enabled with `ARENA_EXTRA_AGENTS=<path>`.
   timeouts are diagnosable rather than blank.
 - The proxy binds the docker bridge gateway explicitly (`--listen
   $ARENA_GATEWAY`), so it is not exposed on the LAN.
+
+
+The [two-word export investigation](tasks-frontier/export-forensics/README.md)
+uses only `Napraw eksport` as its prompt and a neutral instruction profile.
+The agent must connect the active incident to the correct deployed source,
+reject a plausible encoding diagnosis, preserve a late compatibility exception,
+and write regression tests that detect seven injected response faults.
+Run it separately with `--task export-forensics`.
+
+The [large-corpus reconstruction task](tasks-frontier/dossier/README.md) asks
+the agent to recover current obligations and exceptions from a generated
+50 MB English archive, delivering a Markdown table with paragraph citations.
+It scores coverage, current rules, entity identity, uncertainty and supporting
+evidence. The private oracle and source assets are generated lazily and ignored
+by git. Run it separately with `--task dossier`; `--verify-all` includes public-only
+keyword, latest-document and regex baselines.

@@ -1,0 +1,66 @@
+{
+  "name": "returns-release",
+  "title": "Returns: full end-to-end release",
+  "suite_id": "model-arena-frontier-returns-release-v1",
+  "timeout": 7200,
+  "forbidden": [],
+  "snapshot_paths": [
+    "src",
+    "build.py",
+    "fixtures",
+    "clients",
+    "tests",
+    "SPEC.md",
+    "RELEASE.md",
+    "STAGES.md"
+  ],
+  "observed_prefixes": [
+    "src/",
+    "reports/",
+    "build.py"
+  ],
+  "final_hash_paths": [
+    "src",
+    "build.py",
+    "fixtures",
+    "clients",
+    "tests",
+    "SPEC.md",
+    "RELEASE.md",
+    "STAGES.md"
+  ],
+  "mutant_failures": {
+    "noop": [
+      "S06",
+      "S29"
+    ],
+    "dead-code": [
+      "S06"
+    ],
+    "stale-build": [
+      "S27",
+      "S28"
+    ],
+    "stale-check": [
+      "S28"
+    ],
+    "no-rollback": [
+      "S32",
+      "S33",
+      "S34"
+    ],
+    "fake-report": [
+      "S36"
+    ],
+    "broken-client": [
+      "S24"
+    ],
+    "duplicate-refund": [
+      "S14"
+    ],
+    "lost-state": [
+      "S34",
+      "S35"
+    ]
+  }
+}

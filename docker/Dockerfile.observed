@@ -1,0 +1,9 @@
+# Keep the ordinary arena image unchanged. The trusted root supervisor mounts
+# FUSE; the model and its tools still run as UID 1000 without capabilities.
+ARG BASE_IMAGE=model-arena-agent
+FROM ${BASE_IMAGE}
+USER 0:0
+RUN apt-get update && apt-get install -y --no-install-recommends libfuse2 fuse \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /private /checks \
+    && chmod 700 /private && chmod 711 /checks

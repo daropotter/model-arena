@@ -1,0 +1,14 @@
+{
+  "tenant": "amber",
+  "id": "launch",
+  "audience": [
+    "u9",
+    "u2",
+    "u3",
+    "u4",
+    "u9"
+  ],
+  "subject": "  Zażółć, \"hi\"  ",
+  "body": "line one\nline two <b>✓</b>",
+  "urgent": true
+}

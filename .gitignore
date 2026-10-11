@@ -23,3 +23,8 @@ prescreen-passed.txt
 /tmp/
 *.log
 .DS_Store
+
+# Task 3 corpus, private oracle and cache metadata are reproducible assets.
+tasks-frontier/dossier/assets/
+tasks-frontier/dossier/.assets-*/
+tasks-frontier/dossier/.build.lock

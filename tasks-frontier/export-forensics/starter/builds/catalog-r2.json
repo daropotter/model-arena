@@ -1,0 +1,5 @@
+{
+  "entry": "services/catalog-http/app.py",
+  "modules": {},
+  "entry_symbol": "export"
+}

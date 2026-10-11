@@ -1,0 +1,8 @@
+{
+  "id": "wk-a73",
+  "manifest": "builds/settlement-r7.json",
+  "consumer": "interactive",
+  "path": "/exports/orders.csv",
+  "delimiter": ";",
+  "bom": true
+}

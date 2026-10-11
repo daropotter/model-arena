@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "tenant": "birch",
+  "defaults": {
+    "locale": "de",
+    "timezone": "Europe/Berlin",
+    "channels": [
+      "email",
+      "sms"
+    ]
+  },
+  "contacts": [
+    {
+      "id": "u9",
+      "enabled": true,
+      "email": "u9@birch.test",
+      "sms": null,
+      "push": "device-u9",
+      "channels": null,
+      "locale": null,
+      "timezone": null,
+      "extensions": {
+        "segment": [
+          "priority",
+          {
+            "source": "old"
+          }
+        ]
+      }
+    },
+    {
+      "id": "u10",
+      "enabled": true,
+      "email": "u10@birch.test",
+      "sms": null,
+      "push": "device-u10",
+      "channels": [
+        "push",
+        "email"
+      ],
+      "locale": null,
+      "timezone": null,
+      "extensions": {
+        "segment": [
+          "priority",
+          {
+            "source": "old"
+          }
+        ]
+      }
+    },
+    {
+      "id": "u2",
+      "enabled": true,
+      "email": "u2@birch.test",
+      "sms": "+48123456789",
+      "push": "device-u2",
+      "channels": [
+        "push",
+        "email"
+      ],
+      "locale": "pl",
+      "timezone": "UTC",
+      "extensions": {
+        "segment": [
+          "priority",
+          {
+            "source": "old"
+          }
+        ]
+      }
+    },
+    {
+      "id": "u3",
+      "enabled": true,
+      "email": "u3@birch.test",
+      "sms": null,
+      "push": "device-u3",
+      "channels": [],
+      "locale": null,
+      "timezone": null,
+      "extensions": {
+        "segment": [
+          "priority",
+          {
+            "source": "old"
+          }
+        ]
+      }
+    },
+    {
+      "id": "u4",
+      "enabled": false,
+      "email": "u4@birch.test",
+      "sms": null,
+      "push": "device-u4",
+      "channels": null,
+      "locale": null,
+      "timezone": null,
+      "extensions": {
+        "segment": [
+          "priority",
+          {
+            "source": "old"
+          }
+        ]
+      }
+    }
+  ],
+  "extensions": {
+    "account": {
+      "keep": true
+    }
+  }
+}

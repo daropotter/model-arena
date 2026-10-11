@@ -1,0 +1,31 @@
+{
+  "name": "dossier",
+  "title": "Reconstruct binding obligations from a 50 MB mixed corpus",
+  "difficulty": "frontier",
+  "timeout": 7200,
+  "instruction_profile": "reconstruction",
+  "protocol": "observed-fuse-v1",
+  "suite_id": "model-arena-frontier-dossier-v1",
+  "protected": [
+    "corpus/"
+  ],
+  "answer_path": "answer/obligations.md",
+  "grading_paths": ["answer/obligations.md"],
+  "asset_workspace": "assets/workspace",
+  "asset_solution": "assets/solution",
+  "mutant_failures": {
+    "noop": ["C01", "C02", "C03"],
+    "all-unknown": ["C02", "C07"],
+    "stale": ["C02", "C05"],
+    "wrong-entity": ["C04"],
+    "fabricated-citations": ["C03", "C06"],
+    "shotgun-citations": ["C03"],
+    "missing-rows": ["C01"],
+    "invented-rows": ["C01"],
+    "duplicate-rows": ["C01"],
+    "keyword": ["C02", "C03"],
+    "latest": ["C02", "C03"],
+    "regex": ["C02", "C03"],
+    "equivalent": []
+  }
+}

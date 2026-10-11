@@ -1,0 +1,457 @@
+{
+  "stages": [
+    {
+      "id": "S01",
+      "key": "legacy",
+      "title": "Original built service and old client pass",
+      "group": "release",
+      "depends_on": []
+    },
+    {
+      "id": "S02",
+      "key": "backup",
+      "title": "Original source and database checkpoint",
+      "group": "release",
+      "depends_on": [
+        "S01"
+      ]
+    },
+    {
+      "id": "S03",
+      "key": "migration",
+      "title": "Additive schema preserves orders and inventory",
+      "group": "migration",
+      "depends_on": [
+        "S02"
+      ]
+    },
+    {
+      "id": "S04",
+      "key": "migration_repeat",
+      "title": "Migration is repeatable without losing returns",
+      "group": "migration",
+      "depends_on": [
+        "S03"
+      ]
+    },
+    {
+      "id": "S05",
+      "key": "orders",
+      "title": "v1 order response remains unchanged",
+      "group": "compatibility",
+      "depends_on": [
+        "S03"
+      ]
+    },
+    {
+      "id": "S06",
+      "key": "create",
+      "title": "Create return, persist lines and reserved quantities",
+      "group": "requests",
+      "depends_on": [
+        "S03",
+        "S05"
+      ]
+    },
+    {
+      "id": "S07",
+      "key": "validation",
+      "title": "Reject malformed items atomically",
+      "group": "requests",
+      "depends_on": [
+        "S06"
+      ]
+    },
+    {
+      "id": "S08",
+      "key": "reservation",
+      "title": "Reject over-return across active returns",
+      "group": "requests",
+      "depends_on": [
+        "S06"
+      ]
+    },
+    {
+      "id": "S09",
+      "key": "idempotency",
+      "title": "Replay create key; conflict on changed payload",
+      "group": "requests",
+      "depends_on": [
+        "S06"
+      ]
+    },
+    {
+      "id": "S10",
+      "key": "cancel",
+      "title": "Cancel requested return and release reservation",
+      "group": "lifecycle",
+      "depends_on": [
+        "S08",
+        "S09"
+      ]
+    },
+    {
+      "id": "S11",
+      "key": "approve",
+      "title": "Approve with support role and valid transition",
+      "group": "lifecycle",
+      "depends_on": [
+        "S06",
+        "S10"
+      ]
+    },
+    {
+      "id": "S12",
+      "key": "reject",
+      "title": "Reject with support role and release reservation",
+      "group": "lifecycle",
+      "depends_on": [
+        "S11"
+      ]
+    },
+    {
+      "id": "S13",
+      "key": "receive",
+      "title": "Receive once and increment inventory exactly once",
+      "group": "lifecycle",
+      "depends_on": [
+        "S11"
+      ]
+    },
+    {
+      "id": "S14",
+      "key": "settle",
+      "title": "Queue and deliver refund through a separate worker exactly once",
+      "group": "money",
+      "depends_on": [
+        "S13"
+      ]
+    },
+    {
+      "id": "S15",
+      "key": "rounding",
+      "title": "Allocate discounted cents cumulatively without drift",
+      "group": "money",
+      "depends_on": [
+        "S14"
+      ]
+    },
+    {
+      "id": "S16",
+      "key": "partials",
+      "title": "Complete multiple partial returns without overpaying",
+      "group": "money",
+      "depends_on": [
+        "S15",
+        "S12"
+      ]
+    },
+    {
+      "id": "S17",
+      "key": "concurrency",
+      "title": "Concurrent returns cannot over-reserve",
+      "group": "durability",
+      "depends_on": [
+        "S08",
+        "S16"
+      ]
+    },
+    {
+      "id": "S18",
+      "key": "concurrent_key",
+      "title": "Concurrent retries create one return",
+      "group": "durability",
+      "depends_on": [
+        "S09",
+        "S17"
+      ]
+    },
+    {
+      "id": "S19",
+      "key": "isolation",
+      "title": "Tenant and customer isolation on reads and writes",
+      "group": "security",
+      "depends_on": [
+        "S06"
+      ]
+    },
+    {
+      "id": "S20",
+      "key": "roles",
+      "title": "Role matrix for reads, mutations and reports",
+      "group": "security",
+      "depends_on": [
+        "S11",
+        "S13",
+        "S14",
+        "S19"
+      ]
+    },
+    {
+      "id": "S21",
+      "key": "flag",
+      "title": "Feature flag blocks mutations but preserves reads",
+      "group": "security",
+      "depends_on": [
+        "S20"
+      ]
+    },
+    {
+      "id": "S22",
+      "key": "audit",
+      "title": "Exactly one audit event for each successful transition",
+      "group": "integration",
+      "depends_on": [
+        "S14",
+        "S09",
+        "S20"
+      ]
+    },
+    {
+      "id": "S23",
+      "key": "export",
+      "title": "RFC CSV export of settled refunds only",
+      "group": "integration",
+      "depends_on": [
+        "S16",
+        "S20",
+        "S22"
+      ]
+    },
+    {
+      "id": "S24",
+      "key": "client",
+      "title": "Built CLI drives create, read, action, list and export",
+      "group": "integration",
+      "depends_on": [
+        "S23",
+        "S21"
+      ]
+    },
+    {
+      "id": "S25",
+      "key": "legacy_client",
+      "title": "Old consumer runs against new built product",
+      "group": "compatibility",
+      "depends_on": [
+        "S05",
+        "S24"
+      ]
+    },
+    {
+      "id": "S26",
+      "key": "restart",
+      "title": "Restart and migrate without losing settled or pending work",
+      "group": "durability",
+      "depends_on": [
+        "S18",
+        "S22",
+        "S25"
+      ]
+    },
+    {
+      "id": "S27",
+      "key": "queue_atomic",
+      "title": "API enqueues immutable amount and provider key atomically",
+      "group": "outbox",
+      "depends_on": [
+        "S14",
+        "S16"
+      ]
+    },
+    {
+      "id": "S28",
+      "key": "offline",
+      "title": "Queued refunds survive an unavailable provider",
+      "group": "outbox",
+      "depends_on": [
+        "S27"
+      ]
+    },
+    {
+      "id": "S29",
+      "key": "lost_reply",
+      "title": "Lost provider reply cannot charge twice",
+      "group": "payments",
+      "depends_on": [
+        "S28"
+      ]
+    },
+    {
+      "id": "S30",
+      "key": "crash",
+      "title": "Worker killed after acceptance recovers expired lease",
+      "group": "outbox",
+      "depends_on": [
+        "S29"
+      ]
+    },
+    {
+      "id": "S31",
+      "key": "workers",
+      "title": "Concurrent workers lease and settle every job once",
+      "group": "outbox",
+      "depends_on": [
+        "S30"
+      ]
+    },
+    {
+      "id": "S32",
+      "key": "retry",
+      "title": "Retry schedule and dead-letter/manual retry are durable",
+      "group": "payments",
+      "depends_on": [
+        "S31"
+      ]
+    },
+    {
+      "id": "S33",
+      "key": "decline",
+      "title": "Permanent decline preserves stock and money reservation",
+      "group": "payments",
+      "depends_on": [
+        "S32"
+      ]
+    },
+    {
+      "id": "S34",
+      "key": "pagination",
+      "title": "Tenant-bound cursor pagination is stable",
+      "group": "clients",
+      "depends_on": [
+        "S19",
+        "S24"
+      ]
+    },
+    {
+      "id": "S35",
+      "key": "node_client",
+      "title": "Built Node client reads and requests queued payouts",
+      "group": "clients",
+      "depends_on": [
+        "S34",
+        "S33"
+      ]
+    },
+    {
+      "id": "S36",
+      "key": "wire",
+      "title": "Provider contract and tenant merchant mapping are honored",
+      "group": "payments",
+      "depends_on": [
+        "S35"
+      ]
+    },
+    {
+      "id": "S37",
+      "key": "preflight",
+      "title": "ABI1 candidate verified in all 11 groups",
+      "group": "release",
+      "depends_on": [
+        "S04",
+        "S07",
+        "S26",
+        "S36"
+      ]
+    },
+    {
+      "id": "S38",
+      "key": "handoff",
+      "title": "Checked ABI1 deployed with paid and outstanding jobs; receive ABI2 contract",
+      "group": "release",
+      "depends_on": [
+        "S37"
+      ]
+    },
+    {
+      "id": "S39",
+      "key": "late_build",
+      "title": "Actual ABI2 source change after handoff and rebuilt four-artifact bundle",
+      "group": "release",
+      "depends_on": [
+        "S38"
+      ]
+    },
+    {
+      "id": "S40",
+      "key": "fresh_checks",
+      "title": "All final checks renewed against ABI2 bundle and review contract",
+      "group": "release",
+      "depends_on": [
+        "S39"
+      ]
+    },
+    {
+      "id": "S41",
+      "key": "upgrade",
+      "title": "Upgrade existing database and retain queued amount/idempotency identity",
+      "group": "release",
+      "depends_on": [
+        "S40"
+      ]
+    },
+    {
+      "id": "S42",
+      "key": "drain",
+      "title": "ABI2 worker drains ABI1-created pending refund exactly once",
+      "group": "release",
+      "depends_on": [
+        "S41"
+      ]
+    },
+    {
+      "id": "S43",
+      "key": "checkpoint",
+      "title": "Checkpoint both application database and provider ledger",
+      "group": "release",
+      "depends_on": [
+        "S42"
+      ]
+    },
+    {
+      "id": "S44",
+      "key": "rollback",
+      "title": "Run original code without deleting pending or paid financial data",
+      "group": "release",
+      "depends_on": [
+        "S43"
+      ]
+    },
+    {
+      "id": "S45",
+      "key": "old_client",
+      "title": "Old order consumer works after code rollback",
+      "group": "release",
+      "depends_on": [
+        "S44"
+      ]
+    },
+    {
+      "id": "S46",
+      "key": "redeploy",
+      "title": "Redeploy ABI2 bundle with both ledgers retained",
+      "group": "release",
+      "depends_on": [
+        "S45"
+      ]
+    },
+    {
+      "id": "S47",
+      "key": "smoke",
+      "title": "Final restarted product, workers and both clients satisfy retained journey",
+      "group": "release",
+      "depends_on": [
+        "S46"
+      ]
+    },
+    {
+      "id": "S48",
+      "key": "handover",
+      "title": "Manifest binds both builds, review, all components and fresh tests",
+      "group": "release",
+      "depends_on": [
+        "S47"
+      ]
+    }
+  ]
+}

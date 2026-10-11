@@ -1,0 +1,6 @@
+{
+  "id": "INC-471",
+  "state": "closed",
+  "url": "https://raporty-novara.test/export.csv",
+  "resolution": "Stary panel miał niepoprawny separator i kodowanie. Wdrożenie wycofane."
+}

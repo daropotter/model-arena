@@ -1,0 +1,1 @@
+Create notes/modules/MODULE.jsonl. The first entry has kind="intent", a nonempty reason and topics array. Check entries have kind="check", receipt, outcome and diagnosis (nonempty for failures). End with kind="handover", limitations and check_receipts. Earlier entries are append-only. Module names: config, routing, rendering, export, cli.

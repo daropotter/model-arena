@@ -1,0 +1,13 @@
+{
+  "checks": [
+    {"id":"C01","group":"coverage","title":"Every requested scope exactly once; no invented scopes"},
+    {"id":"C02","group":"resolution","title":"Current rule, exception, commencement, uncertainty and basis"},
+    {"id":"C03","group":"evidence","title":"Complete supporting chain and precise valid citations"},
+    {"id":"C04","group":"resolution","title":"Correct legal entity, including selective novation"},
+    {"id":"C05","group":"resolution","title":"No superseded master rules used as current rules"},
+    {"id":"C06","group":"evidence","title":"No unsupported binding claims"},
+    {"id":"C07","group":"resolution","title":"No blanket uncertainty on resolvable scopes"},
+    {"id":"C08","group":"format","title":"One parseable Markdown obligations table"},
+    {"id":"C09","group":"integrity","title":"Complete trusted audit and unchanged source archive"}
+  ]
+}

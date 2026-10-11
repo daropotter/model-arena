@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "tenant": "harbor",
+  "allowed_channels": [
+    "email",
+    "sms",
+    "push"
+  ],
+  "denied_ids": [],
+  "consent_required": false,
+  "hold": true,
+  "quiet_from": 0,
+  "quiet_until": 0,
+  "batch_hour": 23,
+  "urgent_bypass": false,
+  "route_limit": 9,
+  "locale_lock": null
+}

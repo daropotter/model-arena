@@ -1,0 +1,99 @@
+{
+  "checks": [
+    {
+      "id": "P01",
+      "group": "product",
+      "title": "Active host keeps empty field positions"
+    },
+    {
+      "id": "P02",
+      "group": "product",
+      "title": "Zero and false survive in their original columns"
+    },
+    {
+      "id": "P03",
+      "group": "product",
+      "title": "Quoted delimiters, newlines and Unicode"
+    },
+    {
+      "id": "P04",
+      "group": "product",
+      "title": "Column order follows schema, not input dictionary"
+    },
+    {
+      "id": "P05",
+      "group": "product",
+      "title": "Empty dataset, absent/null values and validation"
+    },
+    {
+      "id": "P06",
+      "group": "product",
+      "title": "Lookalike catalog host has no regression"
+    },
+    {
+      "id": "P07",
+      "group": "product",
+      "title": "Partner sparse compatibility remains intact"
+    },
+    {
+      "id": "P08",
+      "group": "product",
+      "title": "Final running build matches source checkout"
+    },
+    {
+      "id": "D01",
+      "group": "diagnosis",
+      "title": "Correct active ticket"
+    },
+    {
+      "id": "D02",
+      "group": "diagnosis",
+      "title": "Exact host to live instance"
+    },
+    {
+      "id": "D03",
+      "group": "diagnosis",
+      "title": "Actual release manifest and packaged modules"
+    },
+    {
+      "id": "D04",
+      "group": "diagnosis",
+      "title": "Reproduction and contradictory encoding evidence"
+    },
+    {
+      "id": "D05",
+      "group": "diagnosis",
+      "title": "Causal account references real built source and evidence chain"
+    },
+    {
+      "id": "D06",
+      "group": "diagnosis",
+      "title": "Late partner exception reviewed and reflected in handover"
+    },
+    {
+      "id": "T01",
+      "group": "verification",
+      "title": "Author tests pass on final built service"
+    },
+    {
+      "id": "T02",
+      "group": "verification",
+      "title": "Author tests detect prepared response mutations"
+    },
+    {
+      "id": "T03",
+      "group": "verification",
+      "title": "Author tests exercise every live instance"
+    },
+    {
+      "id": "T04",
+      "group": "verification",
+      "title": "Test receipt binds final source, tests and review"
+    },
+    {
+      "id": "T05",
+      "group": "verification",
+      "title": "Final claims match actual executions"
+    }
+  ]
+}

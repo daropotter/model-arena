@@ -1,0 +1,40 @@
+{
+  "columns": [
+    {
+      "key": "id",
+      "label": "ID"
+    },
+    {
+      "key": "note",
+      "label": "Notatka"
+    },
+    {
+      "key": "amount",
+      "label": "Kwota"
+    },
+    {
+      "key": "paid",
+      "label": "Opłacone"
+    },
+    {
+      "key": "city",
+      "label": "Miasto"
+    }
+  ],
+  "rows": [
+    {
+      "id": "r1",
+      "note": "",
+      "amount": 0,
+      "paid": false,
+      "city": "Łódź; \"Północ\"\nNowa"
+    },
+    {
+      "city": "Żory",
+      "paid": true,
+      "amount": 125,
+      "note": null,
+      "id": "r2"
+    }
+  ]
+}

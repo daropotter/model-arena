@@ -1,0 +1,15 @@
+{
+  "tenant": "amber",
+  "id": "batch-amber",
+  "audience": [
+    "u9",
+    "u10",
+    "u2",
+    "u3",
+    "u4",
+    "u10"
+  ],
+  "subject": "retain",
+  "body": "not for reports",
+  "urgent": true
+}

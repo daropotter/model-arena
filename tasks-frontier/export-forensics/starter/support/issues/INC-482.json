@@ -1,0 +1,17 @@
+{
+  "id": "INC-482",
+  "state": "open",
+  "title": "Eksport zamówień przestawia wartości",
+  "url": "https://raporty.novara.test/exports/orders.csv",
+  "reproduction": "fixtures/orders-edge.json",
+  "description": "Wiersze z pustą notatką mają dane w innych kolumnach. Zera czasem znikają. Ten sam eksport działał przed aktualizacją wspólnego pakietu. Naprawić lokalne wdrożenie wskazanego adresu, zachować pozostałych odbiorców.",
+  "provisional_hypothesis": {
+    "id": "transport-encoding",
+    "confidence": "high",
+    "note": "Wygląda jak znany problem Excel/UTF-8/BOM z INC-471. Tam pomogła zmiana kodowania w apps/reporting/export_csv.py. Hipoteza autora zgłoszenia, nie potwierdzona diagnoza."
+  },
+  "attachments": [
+    "support/analysis/INC-471.md",
+    "fixtures/orders-edge.json"
+  ]
+}

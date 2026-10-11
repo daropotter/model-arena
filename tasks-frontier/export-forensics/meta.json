@@ -1,0 +1,89 @@
+{
+  "name": "export-forensics",
+  "title": "Napraw eksport \u2014 infer the right deployed source",
+  "suite_id": "model-arena-frontier-export-forensics-v1",
+  "instruction_profile": "forensics",
+  "timeout": 7200,
+  "forbidden": [],
+  "snapshot_paths": [
+    "apps",
+    "services",
+    "shared",
+    "snapshots",
+    "generated",
+    "runtime",
+    "build.py",
+    "ops",
+    "instances",
+    "builds",
+    "contracts",
+    "fixtures",
+    "support",
+    ".desk",
+    "README.md",
+    "tests_extra"
+  ],
+  "final_hash_paths": [
+    "apps",
+    "services",
+    "shared",
+    "snapshots",
+    "generated",
+    "runtime",
+    "build.py",
+    "ops",
+    "instances",
+    "builds",
+    "contracts",
+    "fixtures",
+    "support",
+    ".desk",
+    "README.md",
+    "tests_extra"
+  ],
+  "observed_prefixes": [
+    "services/",
+    "shared/",
+    "runtime/",
+    "build.py",
+    "tests_extra/",
+    "reports/"
+  ],
+  "mutant_failures": {
+    "noop": [
+      "P01",
+      "D01",
+      "T01"
+    ],
+    "wrong-host": [
+      "P01",
+      "D02"
+    ],
+    "dead-copy": [
+      "P01"
+    ],
+    "generated-only": [
+      "P01"
+    ],
+    "global-fix": [
+      "P07"
+    ],
+    "no-tests": [
+      "T01",
+      "T02"
+    ],
+    "shallow-tests": [
+      "T02"
+    ],
+    "stale-tests": [
+      "T04"
+    ],
+    "fake-report": [
+      "T05"
+    ],
+    "skip-review": [
+      "D06"
+    ],
+    "equivalent": []
+  }
+}

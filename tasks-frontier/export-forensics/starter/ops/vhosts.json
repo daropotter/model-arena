@@ -1,0 +1,8 @@
+{
+  "revision": 19,
+  "routes": {
+    "raporty.novara.test": "wk-a73",
+    "raporty-novara.test": "wk-6c2",
+    "feed.novara.test": "wk-5e0"
+  }
+}

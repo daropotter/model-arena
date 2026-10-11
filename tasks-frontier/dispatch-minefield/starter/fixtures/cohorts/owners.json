@@ -1,0 +1,34 @@
+{
+  "amber": {
+    "risk": "consent",
+    "handover": "amber-owner"
+  },
+  "birch": {
+    "risk": "quiet-wrap",
+    "handover": "birch-owner"
+  },
+  "cedar": {
+    "risk": "explicit-optout",
+    "handover": "cedar-owner"
+  },
+  "dune": {
+    "risk": "budget",
+    "handover": "dune-owner"
+  },
+  "ember": {
+    "risk": "channel-remap",
+    "handover": "ember-owner"
+  },
+  "fjord": {
+    "risk": "retry",
+    "handover": "fjord-owner"
+  },
+  "grove": {
+    "risk": "locale-lock",
+    "handover": "grove-owner"
+  },
+  "harbor": {
+    "risk": "legal-hold",
+    "handover": "harbor-owner"
+  }
+}

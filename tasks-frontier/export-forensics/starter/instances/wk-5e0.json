@@ -1,0 +1,8 @@
+{
+  "id": "wk-5e0",
+  "manifest": "builds/settlement-r7.json",
+  "consumer": "importer-r12",
+  "path": "/feeds/sparse.csv",
+  "delimiter": "|",
+  "bom": false
+}

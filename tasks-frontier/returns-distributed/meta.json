@@ -1,0 +1,88 @@
+{
+  "name": "returns-distributed",
+  "title": "Distributed returns: interrupted payments and two-phase release",
+  "suite_id": "model-arena-frontier-returns-distributed-v2",
+  "timeout": 7200,
+  "forbidden": [],
+  "snapshot_paths": [
+    "src",
+    "client",
+    "config",
+    "build.py",
+    "fixtures",
+    "clients",
+    "tests",
+    "SPEC.md",
+    "DISTRIBUTED.md",
+    "RELEASE.md",
+    "STAGES.md"
+  ],
+  "observed_prefixes": [
+    "src/",
+    "client/",
+    "config/",
+    "build.py",
+    "reports/"
+  ],
+  "final_hash_paths": [
+    "src",
+    "client",
+    "config",
+    "build.py",
+    "fixtures",
+    "clients",
+    "tests",
+    "SPEC.md",
+    "DISTRIBUTED.md",
+    "RELEASE.md",
+    "STAGES.md"
+  ],
+  "mutant_failures": {
+    "noop": [
+      "S27",
+      "S38"
+    ],
+    "no-worker": [
+      "S14",
+      "S27"
+    ],
+    "duplicate-charge": [
+      "S29"
+    ],
+    "ignore-lease": [
+      "S30"
+    ],
+    "lost-pending": [
+      "S41",
+      "S42"
+    ],
+    "old-wire": [
+      "S36",
+      "S42"
+    ],
+    "stale-client": [
+      "S35"
+    ],
+    "stale-checks": [
+      "S40"
+    ],
+    "skip-handoff": [
+      "S38",
+      "S39"
+    ],
+    "no-rollback": [
+      "S44",
+      "S45"
+    ],
+    "wrong-cursor": [
+      "S34"
+    ],
+    "fake-manifest": [
+      "S48"
+    ],
+    "unfenced-worker": [
+      "S30"
+    ],
+    "equivalent": []
+  }
+}

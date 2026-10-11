@@ -1,0 +1,1 @@
+Write reports/exceptions.json as an array. Each fixture tenant has tenant, contact_id, effective_locale, effective_timezone, exception and evidence_receipt. Choose the lexicographically first contact with an explicit locale, otherwise the first contact. exception is "contact_override" or "tenant_default". Cite an actual passing rendering check receipt for the final source.

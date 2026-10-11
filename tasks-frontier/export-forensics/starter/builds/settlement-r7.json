@@ -1,0 +1,7 @@
+{
+  "entry": "services/settlement-http/app.py",
+  "modules": {
+    "records": "shared/tabular/r4/records"
+  },
+  "entry_symbol": "export"
+}

@@ -1,0 +1,15 @@
+{
+  "tenant": "harbor",
+  "id": "batch-harbor",
+  "audience": [
+    "u9",
+    "u10",
+    "u2",
+    "u3",
+    "u4",
+    "u10"
+  ],
+  "subject": "retain",
+  "body": "not for reports",
+  "urgent": true
+}

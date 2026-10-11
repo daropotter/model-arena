@@ -1,0 +1,345 @@
+{
+  "stages": [
+    {
+      "id": "S01",
+      "key": "legacy",
+      "title": "Original built service and old client pass",
+      "group": "release",
+      "depends_on": []
+    },
+    {
+      "id": "S02",
+      "key": "backup",
+      "title": "Original source and database checkpoint",
+      "group": "release",
+      "depends_on": [
+        "S01"
+      ]
+    },
+    {
+      "id": "S03",
+      "key": "migration",
+      "title": "Additive schema preserves orders and inventory",
+      "group": "migration",
+      "depends_on": [
+        "S02"
+      ]
+    },
+    {
+      "id": "S04",
+      "key": "migration_repeat",
+      "title": "Migration is repeatable without losing returns",
+      "group": "migration",
+      "depends_on": [
+        "S03"
+      ]
+    },
+    {
+      "id": "S05",
+      "key": "orders",
+      "title": "v1 order response remains unchanged",
+      "group": "compatibility",
+      "depends_on": [
+        "S03"
+      ]
+    },
+    {
+      "id": "S06",
+      "key": "create",
+      "title": "Create return, persist lines and reserved quantities",
+      "group": "requests",
+      "depends_on": [
+        "S03",
+        "S05"
+      ]
+    },
+    {
+      "id": "S07",
+      "key": "validation",
+      "title": "Reject malformed items atomically",
+      "group": "requests",
+      "depends_on": [
+        "S06"
+      ]
+    },
+    {
+      "id": "S08",
+      "key": "reservation",
+      "title": "Reject over-return across active returns",
+      "group": "requests",
+      "depends_on": [
+        "S06"
+      ]
+    },
+    {
+      "id": "S09",
+      "key": "idempotency",
+      "title": "Replay create key; conflict on changed payload",
+      "group": "requests",
+      "depends_on": [
+        "S06"
+      ]
+    },
+    {
+      "id": "S10",
+      "key": "cancel",
+      "title": "Cancel requested return and release reservation",
+      "group": "lifecycle",
+      "depends_on": [
+        "S08",
+        "S09"
+      ]
+    },
+    {
+      "id": "S11",
+      "key": "approve",
+      "title": "Approve with support role and valid transition",
+      "group": "lifecycle",
+      "depends_on": [
+        "S06",
+        "S10"
+      ]
+    },
+    {
+      "id": "S12",
+      "key": "reject",
+      "title": "Reject with support role and release reservation",
+      "group": "lifecycle",
+      "depends_on": [
+        "S11"
+      ]
+    },
+    {
+      "id": "S13",
+      "key": "receive",
+      "title": "Receive once and increment inventory exactly once",
+      "group": "lifecycle",
+      "depends_on": [
+        "S11"
+      ]
+    },
+    {
+      "id": "S14",
+      "key": "settle",
+      "title": "Settle once with finance role and durable ledger",
+      "group": "money",
+      "depends_on": [
+        "S13"
+      ]
+    },
+    {
+      "id": "S15",
+      "key": "rounding",
+      "title": "Allocate discounted cents cumulatively without drift",
+      "group": "money",
+      "depends_on": [
+        "S14"
+      ]
+    },
+    {
+      "id": "S16",
+      "key": "partials",
+      "title": "Complete multiple partial returns without overpaying",
+      "group": "money",
+      "depends_on": [
+        "S15",
+        "S12"
+      ]
+    },
+    {
+      "id": "S17",
+      "key": "concurrency",
+      "title": "Concurrent returns cannot over-reserve",
+      "group": "durability",
+      "depends_on": [
+        "S08",
+        "S16"
+      ]
+    },
+    {
+      "id": "S18",
+      "key": "concurrent_key",
+      "title": "Concurrent retries create one return",
+      "group": "durability",
+      "depends_on": [
+        "S09",
+        "S17"
+      ]
+    },
+    {
+      "id": "S19",
+      "key": "isolation",
+      "title": "Tenant and customer isolation on reads and writes",
+      "group": "security",
+      "depends_on": [
+        "S06"
+      ]
+    },
+    {
+      "id": "S20",
+      "key": "roles",
+      "title": "Role matrix for reads, mutations and reports",
+      "group": "security",
+      "depends_on": [
+        "S11",
+        "S13",
+        "S14",
+        "S19"
+      ]
+    },
+    {
+      "id": "S21",
+      "key": "flag",
+      "title": "Feature flag blocks mutations but preserves reads",
+      "group": "security",
+      "depends_on": [
+        "S20"
+      ]
+    },
+    {
+      "id": "S22",
+      "key": "audit",
+      "title": "Exactly one audit event for each successful transition",
+      "group": "integration",
+      "depends_on": [
+        "S14",
+        "S09",
+        "S20"
+      ]
+    },
+    {
+      "id": "S23",
+      "key": "export",
+      "title": "RFC CSV export of settled refunds only",
+      "group": "integration",
+      "depends_on": [
+        "S16",
+        "S20",
+        "S22"
+      ]
+    },
+    {
+      "id": "S24",
+      "key": "client",
+      "title": "Built CLI drives create, read, action, list and export",
+      "group": "integration",
+      "depends_on": [
+        "S23",
+        "S21"
+      ]
+    },
+    {
+      "id": "S25",
+      "key": "legacy_client",
+      "title": "Old consumer runs against new built product",
+      "group": "compatibility",
+      "depends_on": [
+        "S05",
+        "S24"
+      ]
+    },
+    {
+      "id": "S26",
+      "key": "restart",
+      "title": "Restart preserves state, ledger and idempotency",
+      "group": "durability",
+      "depends_on": [
+        "S18",
+        "S22",
+        "S25"
+      ]
+    },
+    {
+      "id": "S27",
+      "key": "build",
+      "title": "Final build reproducible from final source",
+      "group": "release",
+      "depends_on": [
+        "S04",
+        "S07",
+        "S26"
+      ]
+    },
+    {
+      "id": "S28",
+      "key": "verification",
+      "title": "Every acceptance group checked on final artifact",
+      "group": "release",
+      "depends_on": [
+        "S27"
+      ]
+    },
+    {
+      "id": "S29",
+      "key": "deploy",
+      "title": "Deploy final artifact with original migrated data",
+      "group": "release",
+      "depends_on": [
+        "S28"
+      ]
+    },
+    {
+      "id": "S30",
+      "key": "journey",
+      "title": "Run customer-to-finance scenario on deployed server",
+      "group": "release",
+      "depends_on": [
+        "S29"
+      ]
+    },
+    {
+      "id": "S31",
+      "key": "durable_checkpoint",
+      "title": "Record post-refund state before rollback",
+      "group": "release",
+      "depends_on": [
+        "S30"
+      ]
+    },
+    {
+      "id": "S32",
+      "key": "rollback",
+      "title": "Actually restart original code on retained upgraded DB",
+      "group": "release",
+      "depends_on": [
+        "S31"
+      ]
+    },
+    {
+      "id": "S33",
+      "key": "rollback_smoke",
+      "title": "Old API works after rollback; returns writes unavailable",
+      "group": "release",
+      "depends_on": [
+        "S32"
+      ]
+    },
+    {
+      "id": "S34",
+      "key": "redeploy",
+      "title": "Redeploy same final artifact without losing refunds",
+      "group": "release",
+      "depends_on": [
+        "S33"
+      ]
+    },
+    {
+      "id": "S35",
+      "key": "smoke",
+      "title": "Verify complete retained journey after redeploy",
+      "group": "release",
+      "depends_on": [
+        "S34"
+      ]
+    },
+    {
+      "id": "S36",
+      "key": "handover",
+      "title": "Release manifest and verification map match final artifact",
+      "group": "release",
+      "depends_on": [
+        "S35"
+      ]
+    }
+  ]
+}

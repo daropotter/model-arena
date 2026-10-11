@@ -1,0 +1,8 @@
+{
+  "id": "wk-6c2",
+  "manifest": "builds/catalog-r2.json",
+  "consumer": "catalog",
+  "path": "/export.csv",
+  "delimiter": ",",
+  "bom": false
+}

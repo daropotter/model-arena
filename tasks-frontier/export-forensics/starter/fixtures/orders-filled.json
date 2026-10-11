@@ -1,0 +1,33 @@
+{
+  "columns": [
+    {
+      "key": "id",
+      "label": "ID"
+    },
+    {
+      "key": "note",
+      "label": "Notatka"
+    },
+    {
+      "key": "amount",
+      "label": "Kwota"
+    },
+    {
+      "key": "paid",
+      "label": "Opłacone"
+    },
+    {
+      "key": "city",
+      "label": "Miasto"
+    }
+  ],
+  "rows": [
+    {
+      "id": "r3",
+      "note": "zażółć",
+      "amount": 125,
+      "paid": true,
+      "city": "Łódź"
+    }
+  ]
+}

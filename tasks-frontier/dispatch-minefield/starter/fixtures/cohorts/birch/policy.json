@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "tenant": "birch",
+  "allowed_channels": [
+    "email",
+    "sms",
+    "push"
+  ],
+  "denied_ids": [],
+  "consent_required": false,
+  "hold": false,
+  "quiet_from": 22,
+  "quiet_until": 6,
+  "batch_hour": 23,
+  "urgent_bypass": false,
+  "route_limit": 9,
+  "locale_lock": null
+}

@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "tenant": "cedar",
+  "defaults": {
+    "locale": "pl",
+    "timezone": "Europe/Warsaw",
+    "channels": [
+      "email",
+      "sms",
+      "push"
+    ]
+  },
+  "contacts": [
+    {
+      "id": "u9",
+      "enabled": true,
+      "email": "cedar-u9-email@synthetic.invalid",
+      "sms": null,
+      "push": "cedar-u9-push@synthetic.invalid",
+      "channels": null,
+      "locale": null,
+      "timezone": null,
+      "extensions": {
+        "segment": [
+          "priority",
+          {
+            "source": "old"
+          }
+        ]
+      }
+    },
+    {
+      "id": "u10",
+      "enabled": true,
+      "email": "cedar-u10-email@synthetic.invalid",
+      "sms": null,
+      "push": "cedar-u10-push@synthetic.invalid",
+      "channels": [
+        "push",
+        "email"
+      ],
+      "locale": null,
+      "timezone": null,
+      "extensions": {
+        "segment": [
+          "priority",
+          {
+            "source": "old"
+          }
+        ]
+      }
+    },
+    {
+      "id": "u2",
+      "enabled": true,
+      "email": "cedar-u2-email@synthetic.invalid",
+      "sms": "cedar-u2-sms@synthetic.invalid",
+      "push": "cedar-u2-push@synthetic.invalid",
+      "channels": [
+        "push",
+        "email"
+      ],
+      "locale": "de",
+      "timezone": "UTC",
+      "extensions": {
+        "segment": [
+          "priority",
+          {
+            "source": "old"
+          }
+        ]
+      }
+    },
+    {
+      "id": "u3",
+      "enabled": true,
+      "email": "cedar-u3-email@synthetic.invalid",
+      "sms": null,
+      "push": "cedar-u3-push@synthetic.invalid",
+      "channels": [],
+      "locale": null,
+      "timezone": null,
+      "extensions": {
+        "segment": [
+          "priority",
+          {
+            "source": "old"
+          }
+        ]
+      }
+    },
+    {
+      "id": "u4",
+      "enabled": false,
+      "email": "cedar-u4-email@synthetic.invalid",
+      "sms": null,
+      "push": "cedar-u4-push@synthetic.invalid",
+      "channels": null,
+      "locale": null,
+      "timezone": null,
+      "extensions": {
+        "segment": [
+          "priority",
+          {
+            "source": "old"
+          }
+        ]
+      }
+    }
+  ],
+  "extensions": {
+    "consented_ids": [
+      "u10",
+      "u2"
+    ],
+    "owner": "cedar"
+  }
+}
