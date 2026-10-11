@@ -164,7 +164,7 @@ python3 runner/arena.py \
 cat > models.txt <<EOF
 ollama/gemma4:12b
 ollama/gemma4:26b
-ollama/qwen3.6:35b
+ollama/qwen3.8-32k:latest
 EOF
 python3 runner/arena.py --models-file models.txt --timeout 1800
 ```

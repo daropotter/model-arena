@@ -30,7 +30,7 @@ SECRETS = ("OPENCODE_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY",
 PRIORITY = [
     "ollama/qwen3.8-35b-a3b-moe-Q3_K_M", "opencode/big-pickle",
     "ollama/qwen3.5-64k:latest", "ollama/qwen3.5-32k:latest",
-    "ollama/gemma4-200k:latest", "ollama/qwen3.8-35b-a3b-moe-IQ3_M",
+    "ollama/gemma4-200k:latest",
 ]
 
 
