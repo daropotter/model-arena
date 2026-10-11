@@ -52,6 +52,15 @@ def build_inbox(base: Path, seed: int) -> None:
     old.write_bytes(b"old destination bytes\n")
     (base / "reports" / "keep.bin").write_bytes(b"keep\x00me")
 
+    # The grader creates these as root, but the submission runs as an
+    # unprivileged UID and must be able to write into reports/ (the README
+    # requires it to create reports/YYYY/MM next to the inbox). The sandbox
+    # only grants access to paths passed as arguments, so hand over this
+    # pre-created tree explicitly. Modes do not affect grading.
+    reports = base / "reports"
+    for path in (reports, *reports.rglob("*")):
+        path.chmod(0o777 if path.is_dir() else 0o666)
+
 
 def read_manifest(path: Path):
     try:
