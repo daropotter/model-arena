@@ -43,7 +43,7 @@ while :; do
       break
     fi
     rem=$(quota_remaining)
-    if [ -n "$rem" ] && [ "$rem" -ge 300 ]; then
+    if [ -n "$rem" ] && [ "$rem" -ge 50 ]; then
       echo "[watch] $(date -Is) $left model(s) pending, quota $rem — resuming" >> "$LOG"
       bash sweep-v2-resume.sh
       echo "[watch] $(date -Is) resume pass returned" >> "$LOG"

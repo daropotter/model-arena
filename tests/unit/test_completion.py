@@ -50,9 +50,82 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual(completion.build_plan([self.record], self.hashes)[0]['tasks'], ['codec'])
         self.assertEqual(completion.grader_only([self.record], self.hashes), [])
 
+    def test_agent_wrapper_drift_requires_rerun_even_when_task_is_unchanged(self):
+        hashes = copy.deepcopy(self.hashes)
+        hashes['codec']['docker_digest'] = 'changed-agent-wrapper'
+        self.assertFalse(completion.current(self.record, hashes))
+        self.assertEqual(completion.build_plan([self.record], hashes)[0]['tasks'], ['codec'])
+        self.assertEqual(completion.grader_only([self.record], hashes), [])
+
+    def test_pinned_image_drift_requires_rerun(self):
+        hashes = copy.deepcopy(self.hashes)
+        hashes['codec']['image_digest'] = 'sha256:new-image'
+        self.record['provenance']['image_digest'] = 'sha256:old-image'
+        self.record['provenance']['grader_digest'] = 'old-grader'
+        self.assertFalse(completion.current(self.record, hashes))
+        self.assertEqual(completion.grader_only([self.record], hashes), [])
+
     def test_grader_only_drift_can_reuse_saved_submission(self):
         self.record['provenance']['grader_digest'] = 'old'
         self.assertEqual(completion.grader_only([self.record], self.hashes), [('ollama/test', 'codec')])
+
+    def test_resume_preserves_benchmark_and_changes_only_controller(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            frozen = root / 'original'
+            sources = {name: frozen / name for name in ('runner', 'tasks', 'docker')}
+            for name, source in sources.items():
+                source.mkdir(parents=True)
+                (source / 'input.txt').write_text('original ' + name)
+            (sources['runner'] / 'complete_nonfree.py').write_text('old controller')
+            previous = {'digests': {name: completion.arena.tree_digest(source)
+                                    for name, source in sources.items()}}
+            (sources['runner'] / '.completion-checkpoint').write_text('stop after active run')
+            (root / 'runner').mkdir()
+            (root / 'runner/complete_nonfree.py').write_text('fixed controller')
+            state_dir = root / 'state'
+            state_dir.mkdir()
+            with patch.object(completion, 'ROOT', root):
+                snapshot, digests = completion.freeze_inputs(state_dir, sources, previous)
+            for name in ('tasks', 'docker'):
+                self.assertEqual(digests[name], previous['digests'][name])
+            self.assertEqual((snapshot / 'runner/input.txt').read_text(), 'original runner')
+            self.assertEqual((snapshot / 'runner/complete_nonfree.py').read_text(), 'fixed controller')
+            self.assertFalse((snapshot / 'runner/.completion-checkpoint').exists())
+            self.assertTrue((sources['runner'] / '.completion-checkpoint').exists())
+
+    def test_resume_refuses_changed_frozen_wrapper(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sources = {name: root / name for name in ('runner', 'tasks', 'docker')}
+            for source in sources.values():
+                source.mkdir()
+                (source / 'input.txt').write_text('original')
+            previous = {'digests': {name: completion.arena.tree_digest(source)
+                                    for name, source in sources.items()}}
+            (sources['docker'] / 'input.txt').write_text('changed wrapper')
+            with self.assertRaisesRegex(RuntimeError, 'frozen benchmark inputs changed'):
+                completion.freeze_inputs(root, sources, previous)
+
+    def test_unknown_model_does_not_stop_the_whole_provider(self):
+        with patch.object(completion.reporting, 'event_errors',
+                          return_value=[('ModelNotFoundError', 'model not found')]):
+            self.assertFalse(completion.provider_wide_failure(self.record))
+        with patch.object(completion.reporting, 'event_errors',
+                          return_value=[('APIError', 'insufficient credits')]):
+            self.assertTrue(completion.provider_wide_failure(self.record))
+
+    def test_runner_exception_is_saved_without_secret_message(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as directory:
+            args = SimpleNamespace(tasks=Path(directory), results=Path(directory))
+            with patch.object(completion.arena, 'load_task', return_value={}), \
+                    patch.object(completion.arena, 'run_pair', side_effect=RuntimeError('sensitive-value')):
+                record = completion.run_attempt('paid/model', 'codec', args, 1800, 'batch')
+            self.assertEqual(record['run_outcome'], 'runner_error')
+            self.assertFalse(record['valid_for_quality'])
+            stored = next(Path(directory).glob('*/record.json')).read_text()
+            self.assertNotIn('sensitive-value', stored)
 
     def test_split_secret_and_flush_do_not_leak(self):
         output = io.StringIO()

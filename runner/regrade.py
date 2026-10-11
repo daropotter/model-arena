@@ -168,5 +168,8 @@ def main():
 
 
 if __name__ == "__main__":
-    with run_lock.exclusive(ROOT):
+    if "--dry-run" in sys.argv:
         main()
+    else:
+        with run_lock.exclusive(ROOT):
+            main()

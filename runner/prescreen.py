@@ -132,7 +132,7 @@ def classify(record, run_dir: Path, warmup_ok: bool = True) -> tuple[str, str]:
             f"{record['detail'][:150]}")
 
 
-def main():
+def build_parser():
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="*", default=[])
     ap.add_argument("--models-file", default=None)
@@ -145,12 +145,13 @@ def main():
     ap.add_argument("--results", default=str(ROOT / "results-prescreen"))
     ap.add_argument("--report-only", action="store_true",
                     help="regenerate the report from existing results, run nothing")
-    args = ap.parse_args()
+    return ap
 
-    models = list(args.models)
-    if args.models_file:
-        models += [l.strip() for l in Path(args.models_file).read_text().splitlines()
-                   if l.strip() and not l.startswith("#")]
+
+def main():
+    args = build_parser().parse_args()
+
+    models = arena.collect_models(args)
     if not models and not args.report_only:
         raise SystemExit("no models given")
 
@@ -293,5 +294,11 @@ def main():
 
 
 if __name__ == "__main__":
-    with run_lock.exclusive(ROOT):
+    # Hosted-only prescreens run in parallel with the local completion queue;
+    # only sweeps with ollama/ models serialize on the host lock.
+    _args = build_parser().parse_args()
+    if arena.needs_host_lock(arena.collect_models(_args)):
+        with run_lock.exclusive(ROOT):
+            main()
+    else:
         main()

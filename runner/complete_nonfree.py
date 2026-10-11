@@ -25,7 +25,8 @@ import roster
 import run_lock
 
 ROOT = arena.ROOT
-SECRETS = ("OPENCODE_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY")
+SECRETS = ("OPENCODE_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY",
+           "CLAUDE_CODE_OAUTH_TOKEN")
 PRIORITY = [
     "ollama/qwen3.8-35b-a3b-moe-Q3_K_M", "opencode/big-pickle",
     "ollama/qwen3.5-64k:latest", "ollama/qwen3.5-32k:latest",
@@ -48,13 +49,17 @@ def nonfree(model):
     return isinstance(model, str) and "free" not in model.lower()
 
 
-def task_hashes(tasks_dir):
+def task_hashes(tasks_dir, docker_dir=None, image_digest=None):
+    docker_digest = arena.tree_digest(docker_dir or ROOT / "docker")
+    image_digest = image_digest or (arena.IMAGE if arena.IMAGE.startswith("sha256:") else None)
     return {
         task["name"]: {
             "task_digest": arena.tree_digest(tasks_dir / task["name"]),
             "starter_digest": arena.tree_digest(tasks_dir / task["name"] / "starter"),
             "grader_digest": arena.tree_digest(tasks_dir / task["name"] / "grader"),
             "prompt_digest": arena.file_digest(tasks_dir / task["name"] / "prompt.md"),
+            "docker_digest": docker_digest,
+            **({"image_digest": image_digest} if image_digest else {}),
         }
         for task in arena.list_tasks(tasks_dir) if task["name"] != "smoke"
     }
@@ -100,7 +105,8 @@ def grader_only(records, hashes):
         provenance = record["provenance"]
         if (expected and not current(record, hashes)
                 and all(provenance.get(k) == expected[k]
-                        for k in ("starter_digest", "prompt_digest"))
+                        for k in ("starter_digest", "prompt_digest", "docker_digest", "image_digest")
+                        if k in expected)
                 and provenance.get("grader_digest") != expected["grader_digest"]):
             pairs.append((record["model"], record["task"]))
     return pairs
@@ -118,6 +124,33 @@ def prescreen_models():
             if isinstance(record, dict) and nonfree(record.get("model")):
                 models.add(record["model"])
     return models
+
+
+def provider_wide_failure(record):
+    messages = " ".join(name + " " + message
+                        for name, message in reporting.event_errors(record)).lower()
+    if any(marker in messages for marker in ("model not found", "modelnotfound", "unknown model")):
+        return False
+    return any(marker in messages for marker in (
+        "authentication", "unauthorized", "api key", "quota", "credits",
+        "insufficient", "rate limit", "ratelimit", "freeusagelimit"))
+
+
+def run_attempt(model, task, args, timeout, batch):
+    try:
+        return arena.run_pair(model, arena.load_task(args.tasks, task),
+                              args.tasks, args.results, timeout, True, batch_id=batch)
+    except Exception as exc:
+        identifier = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid4().hex[:6]
+        slug = model.replace("/", "_").replace(":", "_")
+        directory = args.results / f"{identifier}__{task}__{slug}"
+        record = {"schema_version": 2, "run_id": identifier, "batch_id": batch,
+                  "model": model, "task": task, "run_outcome": "runner_error",
+                  "valid_for_quality": False, "passed": False, "score": 0.0,
+                  "detail": "runner error: " + type(exc).__name__,
+                  "finished_at": now(), "run_dir": str(directory)}
+        atomic_json(directory / "record.json", record)
+        return record
 
 
 def ollama_json(endpoint, payload=None, timeout=30):
@@ -160,6 +193,7 @@ class RedactingWriter:
         while "\n" in self.buffer:
             line, self.buffer = self.buffer.split("\n", 1)
             self.stream.write(self.redact(line) + "\n")
+            self.stream.flush()
         return len(text)
 
     def flush(self):
@@ -173,30 +207,63 @@ class RedactingWriter:
         self.stream.flush()
 
 
+def freeze_inputs(state_dir, sources, previous=None):
+    # Freeze both the agent-facing inputs and the runner before starting a
+    # long sweep. Working-tree documentation may be edited independently.
+    snapshot = state_dir / ("suite-" + datetime.now().strftime("%Y%m%d-%H%M%S")
+                            + "-" + uuid4().hex[:6])
+    digests = {name: arena.tree_digest(source) for name, source in sources.items()}
+    if previous and any(digests[name] != previous["digests"][name]
+                        for name in ("tasks", "docker")):
+        raise RuntimeError("frozen benchmark inputs changed; cannot resume that series")
+    snapshot.mkdir()
+    for name in digests:
+        shutil.copytree(sources[name], snapshot / name,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache",
+                                                     ".completion-checkpoint"))
+    if any(arena.tree_digest(sources[name]) != digest for name, digest in digests.items()):
+        raise RuntimeError("suite changed while freezing; retry after edits finish")
+    expected = previous["digests"] if previous else digests
+    if any(arena.tree_digest(snapshot / name) != expected[name] for name in digests):
+        raise RuntimeError("copied suite does not match the recorded benchmark inputs")
+    if previous:
+        # Update queue bookkeeping only; preserve the agent runner, wrapper,
+        # prompts, graders and installed tool versions from the original run.
+        shutil.copy2(ROOT / "runner/complete_nonfree.py", snapshot / "runner/complete_nonfree.py")
+    return snapshot, {name: arena.tree_digest(snapshot / name) for name in digests}
+
+
 def background(args):
     state_dir = args.results / "nonfree-completion"
     state_dir.mkdir(parents=True, exist_ok=True)
     log = state_dir / "controller.log"
     log.touch(mode=0o600, exist_ok=True)
     log.chmod(0o600)
-    # Freeze both the agent-facing inputs and the runner before starting a
-    # long sweep. Working-tree documentation may be edited independently.
-    snapshot = state_dir / ("suite-" + datetime.now().strftime("%Y%m%d-%H%M%S")
-                            + "-" + uuid4().hex[:6])
-    sources = {"runner": ROOT / "runner", "tasks": args.tasks,
-               "docker": ROOT / "docker"}
-    digests = {name: arena.tree_digest(source) for name, source in sources.items()}
-    snapshot.mkdir()
-    for name in digests:
-        shutil.copytree(sources[name], snapshot / name,
-                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"))
-    if any(arena.tree_digest(sources[name]) != digest
-           or arena.tree_digest(snapshot / name) != digest
-           for name, digest in digests.items()):
-        raise RuntimeError("suite changed while freezing; retry after edits finish")
+    previous = None
+    if args.resume_frozen:
+        previous = json.loads((state_dir / "manifest.json").read_text())
+        state = json.loads((state_dir / "status.json").read_text())
+        if state["state"] not in {"stopped", "complete", "finished_with_blocks"}:
+            raise RuntimeError("the previous queue must reach a checkpoint before resuming")
+        sources = {name: Path(previous["snapshot"]) / name
+                   for name in ("runner", "tasks", "docker")}
+        probe = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}",
+                                previous["image_digest"]], capture_output=True, text=True)
+        image = probe.stdout.strip() if probe.returncode == 0 else "unknown"
+        if image != previous["image_digest"]:
+            raise RuntimeError("the pinned benchmark Docker image is unavailable")
+    else:
+        sources = {"runner": ROOT / "runner", "tasks": args.tasks, "docker": ROOT / "docker"}
+        image = arena.image_digest()
+    if image == "unknown":
+        raise RuntimeError("benchmark Docker image is unavailable")
+    snapshot, digests = freeze_inputs(state_dir, sources, previous)
+    os.environ["ARENA_IMAGE"] = image
     atomic_json(state_dir / "manifest.json", {
         "created_at": now(), "source": str(ROOT), "snapshot": str(snapshot),
-        "digests": digests, "task_hashes": task_hashes(snapshot / "tasks"),
+        "digests": digests, "image_digest": image,
+        "task_hashes": task_hashes(snapshot / "tasks", snapshot / "docker", image),
+        "resumed_from": previous["snapshot"] if previous else None,
         "include_prescreen": args.include_prescreen,
         "filter": "identifier does not contain free"})
     os.environ.setdefault("ARENA_LOCK_ROOT", str(ROOT))
@@ -219,11 +286,14 @@ def background(args):
         command.append("--include-prescreen")
     if args.retry_blocked:
         command.append("--retry-blocked")
+    if args.models_file:
+        command += ["--models-file", str(args.models_file.resolve())]
     subprocess.run(command, check=True)
     print(f"Service: {unit}.service; progress: {state_dir / 'status.json'}")
 
 
 def execute(args, hashes, records, plans):
+    targets = {p["model"] for p in plans}
     state_dir = args.results / "nonfree-completion"
     state = {"started_at": now(), "updated_at": now(), "pid": os.getpid(),
              "state": "starting", "active": None, "attempts": [],
@@ -260,20 +330,23 @@ def execute(args, hashes, records, plans):
         print(result.stdout, end="")
         if result.returncode:
             raise RuntimeError("targeted regrade failed")
-    records = reporting.load_records([args.results])
-    plans = build_plan(records, hashes,
-                       prescreen_models() if args.include_prescreen else ())
+    records = [r for r in reporting.load_records([args.results]) if r["model"] in targets]
+    plans = build_plan(records, hashes, targets)
     update(models=plans, state="running")
     providers_blocked = set()
     previous_local = None
     initialized_network = False
     qualified = set()
+    existing_models = {r["model"] for r in records}
+    cohorts = [[p for p in plans if p["model"] in existing_models and not p["qualify"]],
+               [p for p in plans if p["model"] in existing_models and p["qualify"]],
+               [p for p in plans if p["model"] not in existing_models]]
     batch = datetime.now().strftime("%Y%m%d-%H%M%S") + "-nonfree-" + uuid4().hex[:6]
 
     # Fill previously absent pairs first, then replace legacy records. Failed
     # but valid v2 attempts leave the queue just like successful attempts.
-    for phase in ("coverage", "v2"):
-        for plan in plans:
+    for cohort, phase in [(cohort, phase) for cohort in cohorts for phase in ("coverage", "v2")]:
+        for plan in cohort:
             model = plan["model"]
             todo = [t for t in plan["tasks"]
                     if phase == "v2" or t in plan["missing_coverage"]]
@@ -326,14 +399,13 @@ def execute(args, hashes, records, plans):
                         continue
                 if plan["qualify"] and model not in qualified:
                     update(active={"model": model, "task": "smoke", "phase": "qualification"})
-                    pilot = arena.run_pair(model, arena.load_task(args.tasks, "smoke"),
-                                           args.tasks, args.results, 900, True,
-                                           batch_id=batch + "-smoke")
+                    pilot = run_attempt(model, "smoke", args, 900, batch + "-smoke")
                     state["attempts"].append({"model": model, "task": "smoke",
                                               "status": reporting.status_of(pilot), "at": now()})
                     if not reporting.is_valid(pilot):
                         block(model, "qualification infrastructure failure: " + reporting.error_category(pilot))
-                        providers_blocked.add(provider)
+                        if provider_wide_failure(pilot):
+                            providers_blocked.add(provider)
                         continue
                     if not pilot["passed"] and pilot["tool_calls"] == 0:
                         block(model, "qualification produced no real tool calls")
@@ -350,9 +422,7 @@ def execute(args, hashes, records, plans):
                         return
                     update(active={"model": model, "task": task, "phase": phase,
                                    "state": "running", "started_at": now()})
-                    result = arena.run_pair(model, arena.load_task(args.tasks, task),
-                                            args.tasks, args.results, 1800, True,
-                                            batch_id=batch)
+                    result = run_attempt(model, task, args, 1800, batch)
                     status = reporting.status_of(result)
                     state["attempts"].append({"model": model, "task": task,
                                               "status": status, "at": now()})
@@ -360,13 +430,12 @@ def execute(args, hashes, records, plans):
                     arena.write_report(reporting.load_records([args.results]), args.results)
                     if not reporting.is_valid(result):
                         block(model, "infrastructure failure: " + reporting.error_category(result))
-                        if status in {"PROVIDER_ERROR", "API_ERROR"}:
+                        if provider_wide_failure(result):
                             providers_blocked.add(provider)
                         break
             update(active=None)
     final_records = reporting.load_records([args.results])
-    final_plans = build_plan(final_records, hashes,
-                             prescreen_models() if args.include_prescreen else ())
+    final_plans = build_plan([r for r in final_records if r["model"] in targets], hashes, targets)
     arena.write_report(final_records, args.results)
     for script in ("analyze.py", "roster.py", "report_models.py"):
         result = subprocess.run([sys.executable, str(ROOT / "runner" / script),
@@ -381,16 +450,47 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results", type=Path, default=ROOT / "results")
     parser.add_argument("--tasks", type=Path, default=ROOT / "tasks")
+    parser.add_argument("--models-file", type=Path,
+                        help="restrict execution to an explicit model allowlist")
     parser.add_argument("--include-prescreen", action="store_true")
     parser.add_argument("--run", action="store_true")
     parser.add_argument("--background", action="store_true")
+    parser.add_argument("--resume-frozen", action="store_true",
+                        help="resume the recorded frozen suite, updating only the controller")
+    parser.add_argument("--status", action="store_true",
+                        help="show live coverage against the running frozen suite")
     parser.add_argument("--retry-blocked", action="store_true",
                         help="retry saved blockers after their causes were resolved")
     args = parser.parse_args()
+    if args.resume_frozen and not (args.run and args.background):
+        parser.error("--resume-frozen requires --run --background")
     args.results, args.tasks = args.results.resolve(), args.tasks.resolve()
+    if args.status:
+        state_dir = args.results / "nonfree-completion"
+        state = json.loads((state_dir / "status.json").read_text())
+        manifest = json.loads((state_dir / "manifest.json").read_text())
+        targets = {p["model"] for p in state["models"]}
+        records = [r for r in reporting.load_records([args.results]) if r["model"] in targets]
+        frozen_hashes = {task: {**values, "docker_digest": manifest["digests"]["docker"],
+                              "image_digest": manifest["image_digest"]}
+                         for task, values in manifest["task_hashes"].items()}
+        plans = build_plan(records, frozen_hashes, targets)
+        print(json.dumps({"state": state["state"], "active": state["active"],
+                          "models": len(plans), "complete_models": sum(not p["tasks"] for p in plans),
+                          "current_results": sum(p["current"] for p in plans),
+                          "remaining": sum(len(p["tasks"]) for p in plans),
+                          "attempts": len(state["attempts"]), "blocked": state["blocked"],
+                          "snapshot": manifest["snapshot"]}, indent=2))
+        return
     hashes = task_hashes(args.tasks)
     records = reporting.load_records([args.results])
-    plans = build_plan(records, hashes, prescreen_models() if args.include_prescreen else ())
+    extra = prescreen_models() if args.include_prescreen else set()
+    if args.models_file:
+        allowed = {line.strip() for line in args.models_file.read_text().splitlines()
+                   if line.strip() and not line.startswith("#") and nonfree(line.strip())}
+        records = [r for r in records if r["model"] in allowed]
+        extra = allowed
+    plans = build_plan(records, hashes, extra)
     if not args.run:
         print(json.dumps({"models": len(plans), "pending": sum(len(p["tasks"]) for p in plans),
                           "regrade": grader_only(records, hashes), "plan": plans}, indent=2))
