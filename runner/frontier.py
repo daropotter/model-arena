@@ -172,6 +172,10 @@ def run(args):
         if proc.returncode:raise RuntimeError(f'observer container exited {proc.returncode}; inspect {out}')
         result=json.loads((out/'grade.json').read_text())
         status=json.loads((out/'status.json').read_text())
+        if not args.verify and arena.agent_backend(args.model)=='claude':
+            # Keep Claude Code's raw stream; metrics read the opencode-style translation.
+            (out/'events.jsonl').replace(out/'claude-events.jsonl')
+            arena.claude_events.normalize_file(out/'claude-events.jsonl',out/'events.jsonl')
         stats=arena.parse_events(out/'events.jsonl') if not args.verify else dict(tokens_input=0,tokens_output=0,tokens_reasoning=0,tool_calls=0,tool_errors=0,steps=0,api_errors=0,usage_limited=False)
         provider_error=stats.get('usage_limited') or (stats['api_errors'] and not stats['tool_calls'])
         submission=out/'submission';shutil.copytree(backing,submission,symlinks=True)

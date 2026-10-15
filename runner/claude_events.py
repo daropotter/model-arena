@@ -20,7 +20,7 @@ from pathlib import Path
 
 # Errors that mean the subscription refused service, not that the model failed.
 USAGE_LIMIT_PATTERN = re.compile(
-    r"usage limit|rate[ _-]?limit|limit reached|overloaded|\b429\b|\b529\b",
+    r"(usage|session|weekly) limit|rate[ _-]?limit|limit reached|overloaded|\b429\b|\b529\b",
     re.IGNORECASE)
 
 

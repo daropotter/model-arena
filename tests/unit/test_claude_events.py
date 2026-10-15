@@ -100,6 +100,18 @@ class ClaudeEventsTests(unittest.TestCase):
         self.assertTrue(stats["usage_limited"])
         self.assertEqual(stats["tool_calls"], 1)
 
+    def test_session_limit_mid_run_is_flagged(self):
+        message = "You've hit your session limit · resets 6:20pm (UTC)"
+        stats = self.stats_for(STREAM[:4] + [
+            assistant("m9", [{"type": "text", "text": message}],
+                      usage={"input_tokens": 0, "output_tokens": 0},
+                      error="rate_limit"),
+            {"type": "result", "subtype": "success", "is_error": True,
+             "result": message},
+        ])
+        self.assertTrue(stats["usage_limited"])
+        self.assertEqual(stats["tool_calls"], 1)
+
     def test_killed_run_keeps_unfinished_tool_call(self):
         stats = self.stats_for(STREAM[:3])
         self.assertEqual(stats["tool_calls"], 1)
