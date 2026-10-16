@@ -1,0 +1,45 @@
+{
+  "verdict": "request_changes",
+  "findings": [
+    {
+      "file": "notes/api.py",
+      "line": 194,
+      "severity": "high",
+      "category": "security",
+      "title": "Path traversal in shared attachment download",
+      "explanation": "name comes straight from the query string and is joined into the path without secure_name(), so an anonymous holder of any share link can request ?name=../../notes.db and read the whole database (password hashes, every note) or any other readable file. Use self.attachments.read(note.id, name)."
+    },
+    {
+      "file": "notes/api.py",
+      "line": 165,
+      "severity": "high",
+      "category": "security",
+      "title": "Anyone can create a share link for someone else's note",
+      "explanation": "create_share looks the note up with get_by_id and only checks deletion, never note.owner_id == user.id. Any logged-in user can iterate ids and publish other users' notes. Use self.owned_note(user, note_id)."
+    },
+    {
+      "file": "notes/api.py",
+      "line": 178,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "Share expiry check is inverted",
+      "explanation": "The link is rejected while expires_at > now, i.e. while it is still valid, and accepted once it has expired, so fresh links 404 and expired links work forever. The condition must be expires_at <= now."
+    },
+    {
+      "file": "notes/notes_repo.py",
+      "line": 31,
+      "severity": "medium",
+      "category": "behavior-change",
+      "title": "get_by_id returns soft-deleted notes; owned_note now uses it",
+      "explanation": "The old owned_note used get(), which filters deleted_at IS NULL. get_by_id has no such filter, so after DELETE the note is still readable via GET /notes/<id>, its attachments download, PATCH crashes with AttributeError, and share links keep serving it, contradicting the README."
+    },
+    {
+      "file": "notes/api.py",
+      "line": 172,
+      "severity": "medium",
+      "category": "security",
+      "title": "Share token written to the audit log",
+      "explanation": "The share token is a bearer credential; recording token=... in the operator-readable audit table lets anyone with audit access open the shared note, which the README explicitly forbids. Log only the note id (or a token hash)."
+    }
+  ]
+}

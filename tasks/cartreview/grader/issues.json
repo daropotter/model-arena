@@ -1,0 +1,67 @@
+{
+  "verdict": "request_changes",
+  "max_findings": 10,
+  "fp_allowance": 1,
+  "min_recall": 0.75,
+  "issues": [
+    {
+      "id": "float_bulk_rate",
+      "title": "BULK_RATE is a float: Decimal * float raises TypeError for every bulk cart",
+      "severity": "high",
+      "must": true,
+      "categories": ["correctness", "error-handling", "data-integrity"],
+      "locations": [
+        {"file": "shopcart/pricing.py", "anchor": "BULK_RATE = 0.05", "tolerance": 0},
+        {"file": "shopcart/pricing.py", "anchor": "return amount * BULK_RATE", "tolerance": 0}
+      ]
+    },
+    {
+      "id": "bulk_threshold_off_by_one",
+      "title": "quantity() > 10 excludes carts with exactly 10 units (README: 10 or more)",
+      "severity": "medium",
+      "must": true,
+      "categories": ["correctness", "behavior-change"],
+      "locations": [
+        {"file": "shopcart/pricing.py", "anchor": "if cart.quantity() > BULK_MIN_QTY:", "tolerance": 0}
+      ]
+    },
+    {
+      "id": "coupon_percent_unvalidated",
+      "title": "Coupon percent is never validated (README: 1..100, ValueError on creation); 150% gives a negative total",
+      "severity": "medium",
+      "categories": ["correctness", "error-handling", "data-integrity", "security"],
+      "locations": [
+        {"file": "shopcart/models.py", "anchor": "class Coupon:", "before": 1, "after": 2},
+        {"file": "shopcart/pricing.py", "anchor": "def apply_coupon(amount, coupon):", "after": 1}
+      ]
+    },
+    {
+      "id": "shared_coupon_list",
+      "title": "Mutable default coupons=[] is shared by every Cart, so add_coupon leaks coupons into other carts",
+      "severity": "medium",
+      "categories": ["correctness", "data-integrity", "behavior-change"],
+      "locations": [
+        {"file": "shopcart/models.py", "anchor": "def __init__(self, items=None, coupons=[]):", "after": 1},
+        {"file": "shopcart/models.py", "anchor": "self.coupons.append(coupon)", "before": 1}
+      ]
+    }
+  ],
+  "decoys": [
+    {
+      "id": "half_up_rounding",
+      "title": "ROUND_HALF_UP is the documented rounding (README rule 2)",
+      "locations": [
+        {"file": "shopcart/pricing.py", "anchor": "return amount.quantize(CENT, rounding=ROUND_HALF_UP)", "tolerance": 0},
+        {"file": "shopcart/pricing.py", "anchor": "CENT = Decimal(\"0.01\")", "tolerance": 0}
+      ]
+    },
+    {
+      "id": "coupon_stacking",
+      "title": "Stacking coupons in order is the documented behaviour (README rule 4)",
+      "locations": [
+        {"file": "shopcart/pricing.py", "anchor": "for coupon in cart.coupons:", "tolerance": 0}
+      ]
+    }
+  ],
+  "neutral": []
+}

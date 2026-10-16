@@ -1,0 +1,14 @@
+{
+  "name": "billingreview",
+  "title": "Code review: large multi-tenant billing refactor (~600 lines, 21 files, security and money)",
+  "timeout": 2700,
+  "protected": [
+    "README.md",
+    "PR.md",
+    "REVIEW.md",
+    "change.diff",
+    "billing/",
+    "tests/"
+  ],
+  "difficulty": "hard"
+}

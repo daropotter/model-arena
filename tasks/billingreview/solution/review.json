@@ -1,0 +1,77 @@
+{
+  "verdict": "request_changes",
+  "findings": [
+    {
+      "file": "billing/authz.py",
+      "line": 21,
+      "severity": "high",
+      "category": "security",
+      "title": "str-enum Role comparison is alphabetical, not by rank",
+      "explanation": "Role subclasses str, so Role(...) < minimum compares the string values: 'viewer' < 'admin' and 'billing' < 'admin' are False, so viewers and billing users pass admin checks (void, refund), while 'admin' < 'billing' is True, so admins are refused billing actions. Compare explicit ranks."
+    },
+    {
+      "file": "billing/repos/invoices.py",
+      "line": 20,
+      "severity": "high",
+      "category": "security",
+      "title": "find_by_number is not tenant-scoped",
+      "explanation": "The refactor replaced the tenant filter with a raw query on number alone. Invoice numbers are per-tenant (INV-00001 exists in every tenant), so GET /invoices/by-number/<n> returns another tenant's invoice. Use self._one(ctx, 'number = ?', (number,))."
+    },
+    {
+      "file": "billing/services/invoicing.py",
+      "line": 24,
+      "severity": "high",
+      "category": "security",
+      "title": "Invoice cache bypasses tenant scoping",
+      "explanation": "The cache key is the invoice id only and the cached object is returned before the scoped repository query, so once tenant A has read invoice 5, tenant B's GET /invoices/5 (or pay) gets it too. The PR also deleted the test asserting that 404. Key by tenant and check invoice.tenant_id against ctx."
+    },
+    {
+      "file": "billing/services/payments.py",
+      "line": 81,
+      "severity": "high",
+      "category": "data-integrity",
+      "title": "New idempotency key per retry causes double charges",
+      "explanation": "README: the key never changes and the gateway is idempotent per key. A timeout may mean the charge went through ('lost'); retrying with a fresh key charges the customer again. The payment row also keeps payment-<id>, so the webhook for the retried charge no longer matches. Always reuse payment.idempotency_key."
+    },
+    {
+      "file": "billing/services/webhooks.py",
+      "line": 23,
+      "severity": "high",
+      "category": "security",
+      "title": "Unsigned webhooks are accepted",
+      "explanation": "When X-Signature is missing signature_ok returns True, so anyone can POST an unsigned payment.succeeded event with a guessable key (payment-<id>) and mark invoices paid. README requires 401 for any request without a valid signature."
+    },
+    {
+      "file": "billing/services/refunds.py",
+      "line": 42,
+      "severity": "high",
+      "category": "data-integrity",
+      "title": "Timed-out refunds are completed without confirmation",
+      "explanation": "On GatewayTimeout the refund is marked succeeded and unapplied from the invoice although the gateway may never have processed it. README: a refund succeeds only once confirmed and a timed-out refund stays pending; a later refund.failed webhook is now ignored because the status is no longer pending."
+    },
+    {
+      "file": "billing/migrations/0007_payments_tenant.py",
+      "line": 30,
+      "severity": "high",
+      "category": "data-integrity",
+      "title": "Migration silently drops account credits",
+      "explanation": "The backfill uses an inner JOIN on invoices, so payments with invoice_id NULL (account credits, migration 0003) are not copied into payments_new and are lost when the old table is dropped. Take the tenant from customers instead."
+    },
+    {
+      "file": "billing/money.py",
+      "line": 65,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "convert truncates instead of rounding half-even",
+      "explanation": "int() truncates toward zero; README requires ROUND_HALF_EVEN. 10.00 USD at 0.9217 gives 921 cents instead of 922, so foreign-currency lines are under-billed."
+    },
+    {
+      "file": "billing/tenancy.py",
+      "line": 37,
+      "severity": "high",
+      "category": "security",
+      "title": "Staff check is always true",
+      "explanation": "is_staff is an INTEGER 0/1, never None, so `user.is_staff is not None` holds for every user: any API key can send X-Tenant-Id and read or modify any tenant. README requires 403 for non-staff. Use `if acting_as is not None: if not user.is_staff: raise Forbidden`."
+    }
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "verdict": "request_changes",
+  "max_findings": 12,
+  "fp_allowance": 2,
+  "min_recall": 0.75,
+  "issues": [
+    {
+      "id": "share_download_path_traversal",
+      "title": "download_shared joins the unvalidated ?name= into a path: an anonymous link holder can read ../../notes.db or any file",
+      "severity": "high",
+      "must": true,
+      "categories": ["security"],
+      "locations": [
+        {"file": "notes/api.py", "anchor": "path = os.path.join(self.settings.attach_dir, str(note.id), name)", "before": 1, "after": 4},
+        {"file": "notes/api.py", "anchor": "def download_shared(self, request, token):", "after": 1, "tolerance": 0}
+      ]
+    },
+    {
+      "id": "share_create_no_owner_check",
+      "title": "create_share never checks the owner: any logged-in user can publish any note by id",
+      "severity": "high",
+      "must": true,
+      "categories": ["security", "behavior-change"],
+      "locations": [
+        {"file": "notes/api.py", "anchor": "if note is None or note.deleted_at is not None:", "before": 1, "after": 1},
+        {"file": "notes/api.py", "anchor": "def create_share(self, request, note_id):", "tolerance": 0}
+      ]
+    },
+    {
+      "id": "share_expiry_inverted",
+      "title": "Expiry check is inverted: live links answer 404, expired links work forever",
+      "severity": "medium",
+      "categories": ["correctness", "security", "behavior-change"],
+      "locations": [
+        {"file": "notes/api.py", "anchor": "if share is None or share[\"expires_at\"] > self.now():", "after": 1}
+      ]
+    },
+    {
+      "id": "deleted_notes_visible",
+      "title": "get_by_id drops the deleted_at filter; owned_note and share links now serve soft-deleted notes (GET/attachments 200, PATCH crashes, shares survive deletion)",
+      "severity": "medium",
+      "categories": ["behavior-change", "correctness", "security", "data-integrity"],
+      "locations": [
+        {"file": "notes/notes_repo.py", "anchor": "\"SELECT * FROM notes WHERE id = ?\", (note_id,)).fetchone()", "before": 2, "after": 1},
+        {"file": "notes/api.py", "anchor": "if note is None or note.owner_id != user.id:", "before": 1, "after": 1},
+        {"file": "notes/api.py", "anchor": "note = self.notes.get_by_id(share[\"note_id\"])", "after": 2}
+      ]
+    },
+    {
+      "id": "share_token_in_audit_log",
+      "title": "The bearer share token is written to the operator-readable audit log (README: never store bearer credentials)",
+      "severity": "medium",
+      "categories": ["security", "data-integrity"],
+      "locations": [
+        {"file": "notes/api.py", "anchor": "self.audit.record(self.now(), \"share.create\", user.id, note.id, f\"token={token}\")", "tolerance": 0}
+      ]
+    }
+  ],
+  "decoys": [
+    {
+      "id": "order_by_whitelist",
+      "title": "ORDER BY comes from the fixed SORT_COLUMNS table after validation; no SQL injection",
+      "locations": [
+        {"file": "notes/notes_repo.py", "anchor": "f\" ORDER BY {order} LIMIT ?\", (owner_id, limit)).fetchall()", "before": 1, "tolerance": 0},
+        {"file": "notes/notes_repo.py", "anchor": "order = SORT_COLUMNS[sort]", "tolerance": 0},
+        {"file": "notes/validation.py", "anchor": "def sort_key(value, allowed):", "after": 5, "tolerance": 0}
+      ]
+    },
+    {
+      "id": "token_entropy",
+      "title": "secrets.token_urlsafe(24) is 192 random bits",
+      "locations": [
+        {"file": "notes/api.py", "anchor": "token = secrets.token_urlsafe(24)", "tolerance": 0}
+      ]
+    },
+    {
+      "id": "ttl_hours_to_seconds",
+      "title": "expires_at = now + ttl_hours * 3600 is the documented unit conversion",
+      "locations": [
+        {"file": "notes/api.py", "anchor": "expires_at = self.now() + ttl * 3600", "tolerance": 0},
+        {"file": "notes/validation.py", "anchor": "def ttl_hours(value):", "after": 5, "tolerance": 0}
+      ]
+    }
+  ],
+  "neutral": [
+    {
+      "id": "plaintext_share_tokens",
+      "title": "Share tokens are stored unhashed in the database",
+      "locations": [
+        {"file": "notes/notes_repo.py", "anchor": "def create_share(self, token, note_id, user_id, now, expires_at):", "after": 3},
+        {"file": "notes/db.py", "anchor": "CREATE TABLE shares (", "after": 6}
+      ]
+    }
+  ]
+}

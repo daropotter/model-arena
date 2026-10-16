@@ -1,0 +1,176 @@
+{
+  "verdict": "request_changes",
+  "max_findings": 20,
+  "fp_allowance": 3,
+  "min_recall": 0.6,
+  "issues": [
+    {
+      "id": "role_str_enum_order",
+      "title": "Role is a str enum, so Role < Role compares the strings: viewer and billing pass admin checks, admin fails billing checks",
+      "severity": "high",
+      "must": true,
+      "categories": ["security", "correctness", "behavior-change"],
+      "locations": [
+        {"file": "billing/authz.py", "anchor": "if Role(ctx.user.role) < minimum:", "after": 1},
+        {"file": "billing/authz.py", "anchor": "class Role(str, Enum):", "after": 7}
+      ]
+    },
+    {
+      "id": "find_by_number_unscoped",
+      "title": "InvoiceRepo.find_by_number dropped the tenant filter: GET /invoices/by-number reads any tenant's invoice",
+      "severity": "high",
+      "must": true,
+      "categories": ["security", "behavior-change"],
+      "locations": [
+        {"file": "billing/repos/invoices.py", "anchor": "\"SELECT * FROM invoices WHERE number = ?\", (number,)).fetchone()", "before": 2, "after": 1}
+      ]
+    },
+    {
+      "id": "invoice_cache_bypasses_tenant",
+      "title": "Invoice cache is keyed by id only and checked before the scoped query: another tenant gets a cached invoice (the PR also deleted the test asserting this 404)",
+      "severity": "high",
+      "categories": ["security", "data-integrity", "behavior-change"],
+      "locations": [
+        {"file": "billing/services/invoicing.py", "anchor": "key = f\"invoice:{invoice_id}\"", "before": 1, "after": 7}
+      ]
+    },
+    {
+      "id": "retry_fresh_idempotency_key",
+      "title": "charge_with_retry sends a new idempotency key per attempt: a timed-out charge that went through is charged again (double charge), and its webhook no longer matches the payment",
+      "severity": "high",
+      "must": true,
+      "categories": ["data-integrity", "correctness", "behavior-change"],
+      "locations": [
+        {"file": "billing/services/payments.py", "anchor": "key = f\"payment-{payment.id}-{uuid.uuid4().hex[:8]}\"", "before": 2, "after": 2},
+        {"file": "billing/services/payments.py", "anchor": "idempotency_key or payment.idempotency_key)", "before": 2, "tolerance": 0},
+        {"file": "billing/services/payments.py", "anchor": "def attempt(self, ctx, payment, idempotency_key=None):", "tolerance": 0},
+        {"file": "billing/jobs/dunning.py", "anchor": "after = app.payments.charge_with_retry(ctx, latest)", "tolerance": 0}
+      ]
+    },
+    {
+      "id": "unsigned_webhooks_accepted",
+      "title": "Webhooks without X-Signature are accepted: anyone can forge payment.succeeded and mark invoices paid",
+      "severity": "high",
+      "must": true,
+      "categories": ["security"],
+      "locations": [
+        {"file": "billing/services/webhooks.py", "anchor": "if signature is None:", "before": 1, "after": 3}
+      ]
+    },
+    {
+      "id": "refund_timeout_completed",
+      "title": "A timed-out refund is marked succeeded and unapplied from the invoice without gateway confirmation; a later refund.failed webhook is ignored",
+      "severity": "medium",
+      "categories": ["data-integrity", "correctness", "error-handling", "behavior-change"],
+      "locations": [
+        {"file": "billing/services/refunds.py", "anchor": "except GatewayTimeout:", "after": 4}
+      ]
+    },
+    {
+      "id": "migration_drops_credits",
+      "title": "Migration 0007 backfills through an inner JOIN on invoices: account credits (invoice_id NULL) are silently deleted",
+      "severity": "high",
+      "categories": ["data-integrity", "correctness"],
+      "locations": [
+        {"file": "billing/migrations/0007_payments_tenant.py", "anchor": "FROM payments p JOIN invoices i ON i.id = p.invoice_id", "before": 8, "after": 1}
+      ]
+    },
+    {
+      "id": "convert_truncates",
+      "title": "money.convert truncates with int() instead of rounding ROUND_HALF_EVEN (10.00 USD -> 9.21 EUR instead of 9.22)",
+      "severity": "medium",
+      "categories": ["correctness", "behavior-change", "data-integrity"],
+      "locations": [
+        {"file": "billing/money.py", "anchor": "return Money(int(money.amount * rate * scale), currency)", "before": 1}
+      ]
+    },
+    {
+      "id": "staff_check_always_true",
+      "title": "for_user checks `is_staff is not None`, true for every user (0/1): anyone can send X-Tenant-Id and act in any tenant",
+      "severity": "high",
+      "categories": ["security", "behavior-change"],
+      "locations": [
+        {"file": "billing/tenancy.py", "anchor": "if acting_as is not None and user.is_staff is not None:", "after": 3}
+      ]
+    }
+  ],
+  "decoys": [
+    {
+      "id": "compare_digest",
+      "title": "hmac.compare_digest for the signature is the fix, not a problem",
+      "locations": [
+        {"file": "billing/services/webhooks.py", "anchor": "return hmac.compare_digest(signature, f\"sha256={expected}\")", "tolerance": 0}
+      ]
+    },
+    {
+      "id": "scoped_sql_fstrings",
+      "title": "ScopedRepo f-strings interpolate class constants and parameterised clauses only",
+      "locations": [
+        {"file": "billing/repos/base.py", "anchor": "return f\"({where}) AND tenant_id = ?\", (*params, ctx.tenant_id)", "tolerance": 0},
+        {"file": "billing/repos/base.py", "anchor": "f\"SELECT * FROM {self.table} WHERE {clause}\", args).fetchone()", "before": 1, "tolerance": 0},
+        {"file": "billing/repos/base.py", "anchor": "sql = f\"SELECT * FROM {self.table} WHERE {clause} ORDER BY {order}\"", "tolerance": 0}
+      ]
+    },
+    {
+      "id": "fk_off_runner",
+      "title": "Disabling foreign keys outside the transaction and running foreign_key_check is the documented SQLite rebuild procedure",
+      "locations": [
+        {"file": "billing/db.py", "anchor": "conn.execute(\"PRAGMA foreign_keys = OFF\")", "tolerance": 0},
+        {"file": "billing/db.py", "anchor": "if fk_off and conn.execute(\"PRAGMA foreign_key_check\").fetchone():", "after": 1, "tolerance": 0},
+        {"file": "billing/migrations/0007_payments_tenant.py", "anchor": "FOREIGN_KEYS_OFF = True", "tolerance": 0}
+      ]
+    },
+    {
+      "id": "cache_invalidation",
+      "title": "Every invoice write invalidates its cache entry",
+      "locations": [
+        {"file": "billing/services/invoicing.py", "anchor": "self.cache.delete(f\"invoice:{invoice_id}\")", "tolerance": 0}
+      ]
+    },
+    {
+      "id": "dunning_all_tenants",
+      "title": "One system-context query over all tenants, narrowed per invoice, is the intended dunning design",
+      "locations": [
+        {"file": "billing/jobs/dunning.py", "anchor": "for invoice in app.repos.invoices.overdue(system, today):", "after": 1, "tolerance": 0}
+      ]
+    }
+  ],
+  "neutral": [
+    {
+      "id": "removed_isolation_test",
+      "title": "The PR deleted the cross-tenant GET assertion from the visible test",
+      "locations": [
+        {"file": "tests/test_invoices.py", "anchor": "outsider = self.user(\"viewer\", tenant=other)", "before": 2, "after": 2}
+      ]
+    },
+    {
+      "id": "system_context_fail_open",
+      "title": "_scoped skips the filter for any context with tenant_id None (fail-open design)",
+      "locations": [
+        {"file": "billing/repos/base.py", "anchor": "if ctx.is_system:", "after": 1, "tolerance": 0},
+        {"file": "billing/tenancy.py", "anchor": "def is_system(self):", "after": 1}
+      ]
+    },
+    {
+      "id": "retry_sleep_blocks",
+      "title": "charge_with_retry sleeps in-process",
+      "locations": [
+        {"file": "billing/services/payments.py", "anchor": "self.sleep(delay)", "after": 1, "tolerance": 0}
+      ]
+    },
+    {
+      "id": "count_based_numbering",
+      "title": "COUNT(*)-based invoice numbering (unchanged logic)",
+      "locations": [
+        {"file": "billing/repos/invoices.py", "anchor": "def next_number(self, ctx):", "after": 4}
+      ]
+    },
+    {
+      "id": "unbounded_cache",
+      "title": "TTLCache never evicts entries that are not read again",
+      "locations": [
+        {"file": "billing/cache.py", "anchor": "self._data[key] = (value, self.clock() + self.ttl)", "tolerance": 0}
+      ]
+    }
+  ]
+}

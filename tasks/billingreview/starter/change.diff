@@ -1,0 +1,1068 @@
+diff --git a/billing/api.py b/billing/api.py
+--- a/billing/api.py
++++ b/billing/api.py
+@@ -3,10 +3,10 @@
+ import hashlib
+ import time
+ 
+-from . import authz
++from .authz import Role, require
+ from .audit import AuditLog
+ from .db import connect
+-from .errors import BadRequest, Forbidden, NotFound, Unauthorized
++from .errors import BadRequest, NotFound, Unauthorized
+ from .gateway import FakeGateway
+ from .http import Response, Router
+ from .models import User
+@@ -15,6 +15,7 @@
+ from .services.payments import PaymentService
+ from .services.refunds import RefundService
+ from .services.webhooks import WebhookService
++from .tenancy import TenantContext
+ 
+ 
+ def parse_int(value):
+@@ -74,8 +75,8 @@
+ 
+     # -- request context -----------------------------------------------------
+ 
+-    def actor(self, request):
+-        """(user, tenant_id) for an authenticated request."""
++    def context(self, request):
++        """TenantContext for an authenticated request."""
+         header = request.headers.get("Authorization", "")
+         if not header.startswith("Bearer "):
+             raise Unauthorized("missing API key")
+@@ -83,14 +84,7 @@
+                                 (hash_key(header[len("Bearer "):]),)).fetchone()
+         if row is None:
+             raise Unauthorized("unknown API key")
+-        user = User(**row)
+-        tenant_id = user.tenant_id
+-        acting_as = request.headers.get("X-Tenant-Id")
+-        if acting_as is not None:
+-            if not user.is_staff:
+-                raise Forbidden("only staff can act for another tenant")
+-            tenant_id = parse_int(acting_as)
+-        return user, tenant_id
++        return TenantContext.for_user(User(**row), request.headers.get("X-Tenant-Id"))
+ 
+     def body(self, request):
+         if not isinstance(request.body, dict):
+@@ -100,20 +94,20 @@
+     # -- customers -----------------------------------------------------------
+ 
+     def create_customer(self, request):
+-        user, tenant_id = self.actor(request)
+-        authz.require(user, "billing")
++        ctx = self.context(request)
++        require(ctx, Role.BILLING)
+         body = self.body(request)
+         fields = [body.get(k) for k in ("name", "email", "gateway_ref")]
+         if not all(isinstance(v, str) and v.strip() for v in fields):
+             raise BadRequest("name, email and gateway_ref are required")
+-        customer = self.repos.customers.create(tenant_id, *fields, int(self.clock()))
+-        self.audit.record(tenant_id, user.id, "customer.create", customer.id)
++        customer = self.repos.customers.create(ctx, *fields, int(self.clock()))
++        self.audit.record(ctx.tenant_id, ctx.actor_id, "customer.create", customer.id)
+         return Response(201, {"id": customer.id, "name": customer.name})
+ 
+     def get_customer(self, request, customer_id):
+-        user, tenant_id = self.actor(request)
+-        authz.require(user, "viewer")
+-        customer = self.repos.customers.get(tenant_id, parse_int(customer_id))
++        ctx = self.context(request)
++        require(ctx, Role.VIEWER)
++        customer = self.repos.customers.get(ctx, parse_int(customer_id))
+         if customer is None:
+             raise NotFound("customer not found")
+         return Response(200, {"id": customer.id, "name": customer.name,
+@@ -122,62 +116,60 @@
+     # -- invoices ------------------------------------------------------------
+ 
+     def create_invoice(self, request):
+-        user, tenant_id = self.actor(request)
+-        authz.require(user, "billing")
++        ctx = self.context(request)
++        require(ctx, Role.BILLING)
+         body = self.body(request)
+-        invoice = self.invoices.create(tenant_id, user, body.get("customer_id"),
++        invoice = self.invoices.create(ctx, body.get("customer_id"),
+                                        body.get("currency"), body.get("due_date"),
+                                        body.get("lines"))
+         return Response(201, invoice.public())
+ 
+     def list_invoices(self, request):
+-        user, tenant_id = self.actor(request)
+-        authz.require(user, "viewer")
++        ctx = self.context(request)
++        require(ctx, Role.VIEWER)
+         status = request.query.get("status")
+-        invoices = self.repos.invoices.list(tenant_id, status)
++        invoices = self.repos.invoices.list(ctx, status)
+         return Response(200, {"invoices": [i.public() for i in invoices]})
+ 
+     def get_invoice(self, request, invoice_id):
+-        user, tenant_id = self.actor(request)
+-        authz.require(user, "viewer")
+-        invoice = self.invoices.get(tenant_id, parse_int(invoice_id))
++        ctx = self.context(request)
++        require(ctx, Role.VIEWER)
++        invoice = self.invoices.get(ctx, parse_int(invoice_id))
+         data = invoice.public()
+-        data["lines"] = self.repos.invoices.lines(tenant_id, invoice.id)
++        data["lines"] = self.repos.invoices.lines(ctx, invoice.id)
+         return Response(200, data)
+ 
+     def get_invoice_by_number(self, request, number):
+-        user, tenant_id = self.actor(request)
+-        authz.require(user, "viewer")
+-        invoice = self.repos.invoices.find_by_number(tenant_id, number)
++        ctx = self.context(request)
++        require(ctx, Role.VIEWER)
++        invoice = self.repos.invoices.find_by_number(ctx, number)
+         if invoice is None:
+             raise NotFound("invoice not found")
+         return Response(200, invoice.public())
+ 
+     def issue_invoice(self, request, invoice_id):
+-        user, tenant_id = self.actor(request)
+-        authz.require(user, "billing")
+-        return Response(200, self.invoices.issue(tenant_id, user,
+-                                                 parse_int(invoice_id)).public())
++        ctx = self.context(request)
++        require(ctx, Role.BILLING)
++        return Response(200, self.invoices.issue(ctx, parse_int(invoice_id)).public())
+ 
+     def void_invoice(self, request, invoice_id):
+-        user, tenant_id = self.actor(request)
+-        authz.require(user, "admin")
+-        return Response(200, self.invoices.void(tenant_id, user,
+-                                                parse_int(invoice_id)).public())
++        ctx = self.context(request)
++        require(ctx, Role.ADMIN)
++        return Response(200, self.invoices.void(ctx, parse_int(invoice_id)).public())
+ 
+     # -- payments ------------------------------------------------------------
+ 
+     def pay_invoice(self, request, invoice_id):
+-        user, tenant_id = self.actor(request)
+-        authz.require(user, "billing")
+-        payment = self.payments.pay_invoice(tenant_id, user, parse_int(invoice_id))
++        ctx = self.context(request)
++        require(ctx, Role.BILLING)
++        payment = self.payments.pay_invoice(ctx, parse_int(invoice_id))
+         return Response(201, payment.public())
+ 
+     def refund_payment(self, request, payment_id):
+-        user, tenant_id = self.actor(request)
+-        authz.require(user, "admin")
++        ctx = self.context(request)
++        require(ctx, Role.ADMIN)
+         body = self.body(request)
+-        refund = self.refunds.refund(tenant_id, user, parse_int(payment_id),
++        refund = self.refunds.refund(ctx, parse_int(payment_id),
+                                      body.get("amount"), body.get("reason"))
+         return Response(201, refund.public())
+ 
+diff --git a/billing/authz.py b/billing/authz.py
+--- a/billing/authz.py
++++ b/billing/authz.py
+@@ -1,11 +1,22 @@
+-"""Role checks. Roles are ordered: viewer < billing < admin."""
++"""Role checks."""
++
++from enum import Enum
+ 
+ from .errors import Forbidden
+ 
+-ROLE_RANK = {"viewer": 0, "billing": 1, "admin": 2}
++
++class Role(str, Enum):
++    """Ordered roles: VIEWER < BILLING < ADMIN. Being a str enum, a Role
++    compares equal to its database value."""
++
++    VIEWER = "viewer"
++    BILLING = "billing"
++    ADMIN = "admin"
+ 
+ 
+-def require(user, minimum):
+-    """Raise Forbidden unless the user's role is at least `minimum`."""
+-    if ROLE_RANK.get(user.role, -1) < ROLE_RANK[minimum]:
+-        raise Forbidden(f"requires role {minimum}")
++def require(ctx, minimum):
++    """Raise Forbidden unless the context's user has at least `minimum`."""
++    if ctx.user is None:
++        raise Forbidden("no user in context")
++    if Role(ctx.user.role) < minimum:
++        raise Forbidden(f"requires role {minimum.value}")
+diff --git a/billing/cache.py b/billing/cache.py
+new file mode 100644
+--- /dev/null
++++ b/billing/cache.py
+@@ -0,0 +1,30 @@
++"""A small in-process TTL cache."""
++
++import threading
++
++
++class TTLCache:
++    def __init__(self, ttl, clock):
++        self.ttl = ttl
++        self.clock = clock
++        self._data = {}
++        self._lock = threading.Lock()
++
++    def get(self, key):
++        with self._lock:
++            entry = self._data.get(key)
++            if entry is None:
++                return None
++            value, expires = entry
++            if expires <= self.clock():
++                del self._data[key]
++                return None
++            return value
++
++    def set(self, key, value):
++        with self._lock:
++            self._data[key] = (value, self.clock() + self.ttl)
++
++    def delete(self, key):
++        with self._lock:
++            self._data.pop(key, None)
+diff --git a/billing/db.py b/billing/db.py
+--- a/billing/db.py
++++ b/billing/db.py
+@@ -2,7 +2,9 @@
+ 
+ Migrations are billing/migrations/NNNN_name.py modules with an
+ up(conn) function. Each runs in its own transaction together with its
+-schema_migrations row, so a failing migration leaves no trace.
++schema_migrations row, so a failing migration leaves no trace. A module
++that sets FOREIGN_KEYS_OFF = True runs with foreign keys disabled (needed
++to rebuild a referenced table) and is checked with foreign_key_check.
+ """
+ 
+ import importlib.util
+@@ -66,6 +68,17 @@
+         if path.stem in done:
+             continue
+         module = load_migration(path)
+-        with transaction(conn):
+-            module.up(conn)
+-            conn.execute("INSERT INTO schema_migrations (name) VALUES (?)", (path.stem,))
++        fk_off = getattr(module, "FOREIGN_KEYS_OFF", False)
++        if fk_off:
++            # table rebuilds: the pragma is a no-op inside a transaction,
++            # so switch it before BEGIN and verify integrity before COMMIT
++            conn.execute("PRAGMA foreign_keys = OFF")
++        try:
++            with transaction(conn):
++                module.up(conn)
++                if fk_off and conn.execute("PRAGMA foreign_key_check").fetchone():
++                    raise sqlite3.IntegrityError(f"{path.stem}: foreign key violations")
++                conn.execute("INSERT INTO schema_migrations (name) VALUES (?)", (path.stem,))
++        finally:
++            if fk_off:
++                conn.execute("PRAGMA foreign_keys = ON")
+diff --git a/billing/jobs/dunning.py b/billing/jobs/dunning.py
+--- a/billing/jobs/dunning.py
++++ b/billing/jobs/dunning.py
+@@ -1,19 +1,20 @@
+ """Dunning: retry the latest unsettled payment of every overdue invoice,
+ up to settings.max_charge_attempts attempts per payment."""
++
++from ..tenancy import TenantContext
+ 
+ 
+ def run(app, today):
+     """`today` is an ISO date. Returns the ids of payments retried."""
+     retried = []
+-    tenant_ids = [row[0] for row in app.conn.execute("SELECT id FROM tenants ORDER BY id")]
+-    for tenant_id in tenant_ids:
+-        for invoice in app.repos.invoices.overdue(tenant_id, today):
+-            payments = app.repos.payments.for_invoice(tenant_id, invoice.id)
+-            if not payments or payments[-1].status == "succeeded":
+-                continue
+-            latest = payments[-1]
+-            before = latest.attempts
+-            after = app.payments.retry(tenant_id, latest)
+-            if after.attempts != before:
+-                retried.append(latest.id)
++    system = TenantContext.system()
++    for invoice in app.repos.invoices.overdue(system, today):
++        ctx = system.within(invoice.tenant_id)
++        payments = app.repos.payments.for_invoice(ctx, invoice.id)
++        if not payments or payments[-1].status == "succeeded":
++            continue
++        latest = payments[-1]
++        after = app.payments.charge_with_retry(ctx, latest)
++        if after.attempts != latest.attempts:
++            retried.append(latest.id)
+     return retried
+diff --git a/billing/migrations/0007_payments_tenant.py b/billing/migrations/0007_payments_tenant.py
+new file mode 100644
+--- /dev/null
++++ b/billing/migrations/0007_payments_tenant.py
+@@ -0,0 +1,33 @@
++"""payments.tenant_id: scope payments directly instead of through
++customers. Rebuilds the table (SQLite cannot add a NOT NULL column with a
++computed value) and backfills the tenant from the invoice."""
++
++FOREIGN_KEYS_OFF = True  # refunds reference payments(id) during the rebuild
++
++
++def up(conn):
++    conn.execute("""
++        CREATE TABLE payments_new (
++            id INTEGER PRIMARY KEY,
++            tenant_id INTEGER NOT NULL REFERENCES tenants(id),
++            customer_id INTEGER NOT NULL REFERENCES customers(id),
++            invoice_id INTEGER REFERENCES invoices(id),
++            amount_minor INTEGER NOT NULL,
++            currency TEXT NOT NULL,
++            status TEXT NOT NULL CHECK (status IN ('pending', 'succeeded', 'failed')),
++            idempotency_key TEXT NOT NULL UNIQUE,
++            gateway_charge_id TEXT,
++            attempts INTEGER NOT NULL DEFAULT 0,
++            created_at INTEGER NOT NULL
++        )""")
++    conn.execute("""
++        INSERT INTO payments_new (id, tenant_id, customer_id, invoice_id, amount_minor,
++                                  currency, status, idempotency_key, gateway_charge_id,
++                                  attempts, created_at)
++        SELECT p.id, i.tenant_id, p.customer_id, p.invoice_id, p.amount_minor,
++               p.currency, p.status, p.idempotency_key, p.gateway_charge_id,
++               p.attempts, p.created_at
++        FROM payments p JOIN invoices i ON i.id = p.invoice_id""")
++    conn.execute("DROP TABLE payments")
++    conn.execute("ALTER TABLE payments_new RENAME TO payments")
++    conn.execute("CREATE INDEX payments_tenant ON payments(tenant_id, invoice_id)")
+diff --git a/billing/models.py b/billing/models.py
+--- a/billing/models.py
++++ b/billing/models.py
+@@ -48,6 +48,7 @@
+ @dataclass(frozen=True)
+ class Payment:
+     id: int
++    tenant_id: int
+     customer_id: int
+     invoice_id: Optional[int]
+     amount_minor: int
+diff --git a/billing/money.py b/billing/money.py
+--- a/billing/money.py
++++ b/billing/money.py
+@@ -60,5 +60,6 @@
+ 
+ def convert(money, rate, currency):
+     """Convert with `rate` units of `currency` per unit of money.currency,
+-    rounding the result ROUND_HALF_EVEN to the target's minor unit."""
+-    return Money.from_decimal(money.to_decimal() * rate, currency)
++    straight in minor units (no detour through major units)."""
++    scale = Decimal(10) ** (EXPONENTS[check_currency(currency)] - EXPONENTS[money.currency])
++    return Money(int(money.amount * rate * scale), currency)
+diff --git a/billing/repos/__init__.py b/billing/repos/__init__.py
+--- a/billing/repos/__init__.py
++++ b/billing/repos/__init__.py
+@@ -1,5 +1,6 @@
+ """Data access. Every tenant-owned row is read and written through these
+-repositories, and every query is restricted to one tenant."""
++repositories; every method takes a TenantContext and is restricted to its
++tenant (see base.ScopedRepo)."""
+ 
+ from .customers import CustomerRepo
+ from .invoices import InvoiceRepo
+diff --git a/billing/repos/base.py b/billing/repos/base.py
+new file mode 100644
+--- /dev/null
++++ b/billing/repos/base.py
+@@ -0,0 +1,29 @@
++"""Tenant-scoped query helpers shared by the repositories."""
++
++
++class ScopedRepo:
++    table = None  # set by subclasses; never user input
++    row_type = None
++
++    def __init__(self, conn):
++        self.conn = conn
++
++    def _scoped(self, ctx, where, params=()):
++        """Restrict `where` to the context's tenant (system: no restriction)."""
++        if ctx.is_system:
++            return where, tuple(params)
++        return f"({where}) AND tenant_id = ?", (*params, ctx.tenant_id)
++
++    def _one(self, ctx, where, params=()):
++        clause, args = self._scoped(ctx, where, params)
++        row = self.conn.execute(
++            f"SELECT * FROM {self.table} WHERE {clause}", args).fetchone()
++        return self.row_type(**row) if row else None
++
++    def _all(self, ctx, where, params=(), order="id", limit=None):
++        clause, args = self._scoped(ctx, where, params)
++        sql = f"SELECT * FROM {self.table} WHERE {clause} ORDER BY {order}"
++        if limit is not None:
++            sql += " LIMIT ?"
++            args = (*args, limit)
++        return [self.row_type(**row) for row in self.conn.execute(sql, args)]
+diff --git a/billing/repos/customers.py b/billing/repos/customers.py
+--- a/billing/repos/customers.py
++++ b/billing/repos/customers.py
+@@ -1,24 +1,16 @@
+ from ..models import Customer
++from .base import ScopedRepo
+ 
+ 
+-class CustomerRepo:
+-    def __init__(self, conn):
+-        self.conn = conn
++class CustomerRepo(ScopedRepo):
++    table = "customers"
++    row_type = Customer
+ 
+-    def create(self, tenant_id, name, email, gateway_ref, now):
++    def create(self, ctx, name, email, gateway_ref, now):
+         cur = self.conn.execute(
+             "INSERT INTO customers (tenant_id, name, email, gateway_ref, created_at)"
+-            " VALUES (?, ?, ?, ?, ?)", (tenant_id, name, email, gateway_ref, now))
+-        return self.get(tenant_id, cur.lastrowid)
++            " VALUES (?, ?, ?, ?, ?)", (ctx.tenant_id, name, email, gateway_ref, now))
++        return self.get(ctx, cur.lastrowid)
+ 
+-    def get(self, tenant_id, customer_id):
+-        row = self.conn.execute(
+-            "SELECT * FROM customers WHERE id = ? AND tenant_id = ?",
+-            (customer_id, tenant_id)).fetchone()
+-        return Customer(**row) if row else None
+-
+-    def tenant_of(self, customer_id):
+-        """Unscoped: the gateway webhook has to find the tenant itself."""
+-        row = self.conn.execute(
+-            "SELECT tenant_id FROM customers WHERE id = ?", (customer_id,)).fetchone()
+-        return row[0] if row else None
++    def get(self, ctx, customer_id):
++        return self._one(ctx, "id = ?", (customer_id,))
+diff --git a/billing/repos/invoices.py b/billing/repos/invoices.py
+--- a/billing/repos/invoices.py
++++ b/billing/repos/invoices.py
+@@ -1,43 +1,35 @@
+ from ..models import Invoice
++from .base import ScopedRepo
+ 
+ 
+-class InvoiceRepo:
+-    def __init__(self, conn):
+-        self.conn = conn
++class InvoiceRepo(ScopedRepo):
++    table = "invoices"
++    row_type = Invoice
+ 
+-    def create(self, tenant_id, customer_id, number, currency, due_date, now):
++    def create(self, ctx, customer_id, number, currency, due_date, now):
+         cur = self.conn.execute(
+             "INSERT INTO invoices (tenant_id, customer_id, number, currency, status,"
+             " due_date, created_at, updated_at) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)",
+-            (tenant_id, customer_id, number, currency, due_date, now, now))
++            (ctx.tenant_id, customer_id, number, currency, due_date, now, now))
+         return cur.lastrowid
+ 
+-    def get(self, tenant_id, invoice_id):
++    def get(self, ctx, invoice_id):
++        return self._one(ctx, "id = ?", (invoice_id,))
++
++    def find_by_number(self, ctx, number):
+         row = self.conn.execute(
+-            "SELECT * FROM invoices WHERE id = ? AND tenant_id = ?",
+-            (invoice_id, tenant_id)).fetchone()
++            "SELECT * FROM invoices WHERE number = ?", (number,)).fetchone()
+         return Invoice(**row) if row else None
+ 
+-    def find_by_number(self, tenant_id, number):
+-        row = self.conn.execute(
+-            "SELECT * FROM invoices WHERE number = ? AND tenant_id = ?",
+-            (number, tenant_id)).fetchone()
+-        return Invoice(**row) if row else None
++    def list(self, ctx, status=None, limit=100):
++        if status is None:
++            return self._all(ctx, "1 = 1", limit=limit)
++        return self._all(ctx, "status = ?", (status,), limit=limit)
+ 
+-    def list(self, tenant_id, status=None, limit=100):
+-        if status is None:
+-            rows = self.conn.execute(
+-                "SELECT * FROM invoices WHERE tenant_id = ? ORDER BY id LIMIT ?",
+-                (tenant_id, limit))
+-        else:
+-            rows = self.conn.execute(
+-                "SELECT * FROM invoices WHERE tenant_id = ? AND status = ?"
+-                " ORDER BY id LIMIT ?", (tenant_id, status, limit))
+-        return [Invoice(**row) for row in rows]
+-
+-    def next_number(self, tenant_id):
++    def next_number(self, ctx):
+         count = self.conn.execute(
+-            "SELECT COUNT(*) FROM invoices WHERE tenant_id = ?", (tenant_id,)).fetchone()[0]
++            "SELECT COUNT(*) FROM invoices WHERE tenant_id = ?",
++            (ctx.tenant_id,)).fetchone()[0]
+         return f"INV-{count + 1:05d}"
+ 
+     def add_line(self, invoice_id, description, quantity, unit_price_minor):
+@@ -45,26 +37,23 @@
+             "INSERT INTO invoice_lines (invoice_id, description, quantity, unit_price_minor)"
+             " VALUES (?, ?, ?, ?)", (invoice_id, description, quantity, unit_price_minor))
+ 
+-    def lines(self, tenant_id, invoice_id):
++    def lines(self, ctx, invoice_id):
++        if self.get(ctx, invoice_id) is None:
++            return []
+         rows = self.conn.execute(
+-            "SELECT l.description, l.quantity, l.unit_price_minor FROM invoice_lines l"
+-            " JOIN invoices i ON i.id = l.invoice_id"
+-            " WHERE l.invoice_id = ? AND i.tenant_id = ? ORDER BY l.id",
+-            (invoice_id, tenant_id))
++            "SELECT description, quantity, unit_price_minor FROM invoice_lines"
++            " WHERE invoice_id = ? ORDER BY id", (invoice_id,))
+         return [dict(row) for row in rows]
+ 
+-    def update(self, tenant_id, invoice_id, now, **fields):
++    def update(self, ctx, invoice_id, now, **fields):
+         allowed = {"status", "total_minor", "paid_minor"}
+         if not fields or set(fields) - allowed:
+             raise ValueError(f"cannot update {sorted(set(fields) - allowed)}")
+         assignments = ", ".join(f"{name} = ?" for name in sorted(fields))
+         values = [fields[name] for name in sorted(fields)]
+-        self.conn.execute(
+-            f"UPDATE invoices SET {assignments}, updated_at = ?"
+-            " WHERE id = ? AND tenant_id = ?", (*values, now, invoice_id, tenant_id))
++        clause, args = self._scoped(ctx, "id = ?", (invoice_id,))
++        self.conn.execute(f"UPDATE invoices SET {assignments}, updated_at = ? WHERE {clause}",
++                          (*values, now, *args))
+ 
+-    def overdue(self, tenant_id, today):
+-        rows = self.conn.execute(
+-            "SELECT * FROM invoices WHERE tenant_id = ? AND status = 'open'"
+-            " AND due_date < ? ORDER BY id", (tenant_id, today))
+-        return [Invoice(**row) for row in rows]
++    def overdue(self, ctx, today):
++        return self._all(ctx, "status = 'open' AND due_date < ?", (today,))
+diff --git a/billing/repos/payments.py b/billing/repos/payments.py
+--- a/billing/repos/payments.py
++++ b/billing/repos/payments.py
+@@ -1,37 +1,29 @@
+ from ..models import Payment
+-
+-# payments carry no tenant_id: a payment belongs to its customer's tenant
+-SCOPE = "JOIN customers c ON c.id = p.customer_id WHERE c.tenant_id = ?"
++from .base import ScopedRepo
+ 
+ 
+-class PaymentRepo:
+-    def __init__(self, conn):
+-        self.conn = conn
++class PaymentRepo(ScopedRepo):
++    table = "payments"
++    row_type = Payment
+ 
+-    def create(self, customer_id, invoice_id, amount_minor, currency, idempotency_key, now):
++    def create(self, ctx, customer_id, invoice_id, amount_minor, currency,
++               idempotency_key, now):
+         cur = self.conn.execute(
+-            "INSERT INTO payments (customer_id, invoice_id, amount_minor, currency,"
+-            " status, idempotency_key, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
+-            (customer_id, invoice_id, amount_minor, currency, idempotency_key, now))
++            "INSERT INTO payments (tenant_id, customer_id, invoice_id, amount_minor,"
++            " currency, status, idempotency_key, created_at)"
++            " VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
++            (ctx.tenant_id, customer_id, invoice_id, amount_minor, currency,
++             idempotency_key, now))
+         return cur.lastrowid
+ 
+-    def get(self, tenant_id, payment_id):
+-        row = self.conn.execute(
+-            f"SELECT p.* FROM payments p {SCOPE} AND p.id = ?",
+-            (tenant_id, payment_id)).fetchone()
+-        return Payment(**row) if row else None
++    def get(self, ctx, payment_id):
++        return self._one(ctx, "id = ?", (payment_id,))
+ 
+-    def for_invoice(self, tenant_id, invoice_id):
+-        rows = self.conn.execute(
+-            f"SELECT p.* FROM payments p {SCOPE} AND p.invoice_id = ? ORDER BY p.id",
+-            (tenant_id, invoice_id))
+-        return [Payment(**row) for row in rows]
++    def for_invoice(self, ctx, invoice_id):
++        return self._all(ctx, "invoice_id = ?", (invoice_id,))
+ 
+-    def by_idempotency_key(self, key):
+-        """Unscoped: used only by the gateway webhook, which has no tenant."""
+-        row = self.conn.execute(
+-            "SELECT * FROM payments WHERE idempotency_key = ?", (key,)).fetchone()
+-        return Payment(**row) if row else None
++    def by_idempotency_key(self, ctx, key):
++        return self._one(ctx, "idempotency_key = ?", (key,))
+ 
+     def set_key(self, payment_id, key):
+         self.conn.execute(
+diff --git a/billing/services/invoicing.py b/billing/services/invoicing.py
+--- a/billing/services/invoicing.py
++++ b/billing/services/invoicing.py
+@@ -2,6 +2,7 @@
+ 
+ import datetime
+ 
++from ..cache import TTLCache
+ from ..db import transaction
+ from ..errors import BadRequest, Conflict, NotFound
+ from ..money import Money, check_currency, convert
+@@ -13,39 +14,47 @@
+         self.audit = audit
+         self.settings = settings
+         self.clock = clock
++        self.cache = TTLCache(settings.invoice_cache_ttl, clock)
+ 
+     def now(self):
+         return int(self.clock())
+ 
+-    def get(self, tenant_id, invoice_id):
+-        invoice = self.repos.invoices.get(tenant_id, invoice_id)
++    def get(self, ctx, invoice_id):
++        key = f"invoice:{invoice_id}"
++        invoice = self.cache.get(key)
+         if invoice is None:
+-            raise NotFound("invoice not found")
++            invoice = self.repos.invoices.get(ctx, invoice_id)
++            if invoice is None:
++                raise NotFound("invoice not found")
++            self.cache.set(key, invoice)
+         return invoice
+ 
+-    def create(self, tenant_id, actor, customer_id, currency, due_date, lines):
++    def _update(self, ctx, invoice_id, **fields):
++        self.repos.invoices.update(ctx, invoice_id, self.now(), **fields)
++        self.cache.delete(f"invoice:{invoice_id}")
++
++    def create(self, ctx, customer_id, currency, due_date, lines):
+         try:
+             check_currency(currency)
+             datetime.date.fromisoformat(due_date)
+         except (TypeError, ValueError) as exc:
+             raise BadRequest(str(exc))
+-        if self.repos.customers.get(tenant_id, customer_id) is None:
++        if self.repos.customers.get(ctx, customer_id) is None:
+             raise NotFound("customer not found")
+         if not lines:
+             raise BadRequest("an invoice needs at least one line")
+         priced = [self._price_line(line, currency) for line in lines]
+         with transaction(self.repos.conn):
+-            number = self.repos.invoices.next_number(tenant_id)
++            number = self.repos.invoices.next_number(ctx)
+             invoice_id = self.repos.invoices.create(
+-                tenant_id, customer_id, number, currency, due_date, self.now())
++                ctx, customer_id, number, currency, due_date, self.now())
+             total = Money.zero(currency)
+             for description, quantity, unit in priced:
+                 self.repos.invoices.add_line(invoice_id, description, quantity, unit.amount)
+                 total = total + unit.times(quantity)
+-            self.repos.invoices.update(tenant_id, invoice_id, self.now(),
+-                                       total_minor=total.amount)
+-            self.audit.record(tenant_id, actor.id, "invoice.create", number)
+-        return self.get(tenant_id, invoice_id)
++            self._update(ctx, invoice_id, total_minor=total.amount)
++            self.audit.record(ctx.tenant_id, ctx.actor_id, "invoice.create", number)
++        return self.get(ctx, invoice_id)
+ 
+     def _price_line(self, line, currency):
+         try:
+@@ -64,33 +73,31 @@
+             unit = convert(unit, rate, currency)
+         return description, quantity, unit
+ 
+-    def issue(self, tenant_id, actor, invoice_id):
+-        invoice = self.get(tenant_id, invoice_id)
++    def issue(self, ctx, invoice_id):
++        invoice = self.get(ctx, invoice_id)
+         if invoice.status != "draft":
+             raise Conflict("only draft invoices can be issued")
+-        self.repos.invoices.update(tenant_id, invoice.id, self.now(), status="open")
+-        self.audit.record(tenant_id, actor.id, "invoice.issue", invoice.number)
+-        return self.get(tenant_id, invoice.id)
++        self._update(ctx, invoice.id, status="open")
++        self.audit.record(ctx.tenant_id, ctx.actor_id, "invoice.issue", invoice.number)
++        return self.get(ctx, invoice.id)
+ 
+-    def void(self, tenant_id, actor, invoice_id):
+-        invoice = self.get(tenant_id, invoice_id)
++    def void(self, ctx, invoice_id):
++        invoice = self.get(ctx, invoice_id)
+         if invoice.status not in ("draft", "open") or invoice.paid_minor:
+             raise Conflict("only unpaid draft or open invoices can be voided")
+-        self.repos.invoices.update(tenant_id, invoice.id, self.now(), status="void")
+-        self.audit.record(tenant_id, actor.id, "invoice.void", invoice.number)
+-        return self.get(tenant_id, invoice.id)
++        self._update(ctx, invoice.id, status="void")
++        self.audit.record(ctx.tenant_id, ctx.actor_id, "invoice.void", invoice.number)
++        return self.get(ctx, invoice.id)
+ 
+-    def apply_payment(self, tenant_id, invoice_id, amount_minor):
+-        invoice = self.get(tenant_id, invoice_id)
++    def apply_payment(self, ctx, invoice_id, amount_minor):
++        invoice = self.get(ctx, invoice_id)
+         paid = invoice.paid_minor + amount_minor
+         status = "paid" if paid >= invoice.total_minor else invoice.status
+-        self.repos.invoices.update(tenant_id, invoice.id, self.now(),
+-                                   paid_minor=paid, status=status)
++        self._update(ctx, invoice.id, paid_minor=paid, status=status)
+ 
+-    def unapply_payment(self, tenant_id, invoice_id, amount_minor):
+-        invoice = self.get(tenant_id, invoice_id)
++    def unapply_payment(self, ctx, invoice_id, amount_minor):
++        invoice = self.get(ctx, invoice_id)
+         paid = invoice.paid_minor - amount_minor
+         status = "open" if invoice.status == "paid" and paid < invoice.total_minor \
+             else invoice.status
+-        self.repos.invoices.update(tenant_id, invoice.id, self.now(),
+-                                   paid_minor=paid, status=status)
++        self._update(ctx, invoice.id, paid_minor=paid, status=status)
+diff --git a/billing/services/payments.py b/billing/services/payments.py
+--- a/billing/services/payments.py
++++ b/billing/services/payments.py
+@@ -5,71 +5,84 @@
+ payment reuses that key, so the gateway never charges twice for it.
+ """
+ 
++import time
++import uuid
++
+ from ..db import transaction
+ from ..errors import Conflict, GatewayDeclined, GatewayTimeout, NotFound
+ 
+ 
+ class PaymentService:
+-    def __init__(self, repos, invoices, gateway, audit, settings, clock):
++    def __init__(self, repos, invoices, gateway, audit, settings, clock, sleep=time.sleep):
+         self.repos = repos
+         self.invoices = invoices
+         self.gateway = gateway
+         self.audit = audit
+         self.settings = settings
+         self.clock = clock
++        self.sleep = sleep
+ 
+-    def get(self, tenant_id, payment_id):
+-        payment = self.repos.payments.get(tenant_id, payment_id)
++    def get(self, ctx, payment_id):
++        payment = self.repos.payments.get(ctx, payment_id)
+         if payment is None:
+             raise NotFound("payment not found")
+         return payment
+ 
+-    def pay_invoice(self, tenant_id, actor, invoice_id):
+-        invoice = self.invoices.get(tenant_id, invoice_id)
++    def pay_invoice(self, ctx, invoice_id):
++        invoice = self.invoices.get(ctx, invoice_id)
+         if invoice.status != "open":
+             raise Conflict("only open invoices can be paid")
+         due = invoice.total_minor - invoice.paid_minor
+         if due <= 0:
+             raise Conflict("nothing to pay")
+         if any(p.status == "pending"
+-               for p in self.repos.payments.for_invoice(tenant_id, invoice.id)):
++               for p in self.repos.payments.for_invoice(ctx, invoice.id)):
+             raise Conflict("a payment for this invoice is already in flight")
+         with transaction(self.repos.conn):
+             payment_id = self.repos.payments.create(
+-                invoice.customer_id, invoice.id, due, invoice.currency,
++                ctx, invoice.customer_id, invoice.id, due, invoice.currency,
+                 f"pending-{invoice.id}-{int(self.clock() * 1e6)}", int(self.clock()))
+             self.repos.payments.set_key(payment_id, f"payment-{payment_id}")
+-        self.audit.record(tenant_id, actor.id, "payment.start", payment_id)
+-        return self.attempt(tenant_id, self.get(tenant_id, payment_id))
++        self.audit.record(ctx.tenant_id, ctx.actor_id, "payment.start", payment_id)
++        return self.attempt(ctx, self.get(ctx, payment_id))
+ 
+-    def attempt(self, tenant_id, payment):
++    def attempt(self, ctx, payment, idempotency_key=None):
+         """One gateway call for a pending or failed payment."""
+-        customer = self.repos.customers.get(tenant_id, payment.customer_id)
++        customer = self.repos.customers.get(ctx, payment.customer_id)
+         self.repos.payments.record_attempt(payment.id)
+         try:
+             result = self.gateway.charge(customer.gateway_ref, payment.amount_minor,
+-                                         payment.currency, payment.idempotency_key)
++                                         payment.currency,
++                                         idempotency_key or payment.idempotency_key)
+         except GatewayDeclined:
+             self.repos.payments.settle(payment.id, "failed")
+-            return self.get(tenant_id, payment.id)
++            return self.get(ctx, payment.id)
+         except GatewayTimeout:
+             # outcome unknown: stays pending until the webhook (or a retry
+             # with the same key) tells us what happened
+-            return self.get(tenant_id, payment.id)
+-        self.succeed(tenant_id, payment, result.charge_id)
+-        return self.get(tenant_id, payment.id)
++            return self.get(ctx, payment.id)
++        self.succeed(ctx, payment, result.charge_id)
++        return self.get(ctx, payment.id)
+ 
+-    def succeed(self, tenant_id, payment, charge_id):
++    def succeed(self, ctx, payment, charge_id):
+         with transaction(self.repos.conn):
+             self.repos.payments.settle(payment.id, "succeeded", charge_id)
+             if payment.invoice_id is not None:
+-                self.invoices.apply_payment(tenant_id, payment.invoice_id,
+-                                            payment.amount_minor)
++                self.invoices.apply_payment(ctx, payment.invoice_id, payment.amount_minor)
+ 
+-    def retry(self, tenant_id, payment):
+-        """Used by the dunning job for pending or failed payments."""
+-        if payment.status == "succeeded":
+-            return payment
+-        if payment.attempts >= self.settings.max_charge_attempts:
+-            return payment
+-        return self.attempt(tenant_id, payment)
++    def charge_with_retry(self, ctx, payment):
++        """Used by the dunning job: attempt the payment until it settles,
++        backing off between gateway timeouts, within max_charge_attempts."""
++        delay = self.settings.retry_backoff
++        while payment.status != "succeeded" and \
++                payment.attempts < self.settings.max_charge_attempts:
++            # a fresh key per attempt, otherwise the gateway would replay
++            # the cached outcome of the previous attempt
++            key = f"payment-{payment.id}-{uuid.uuid4().hex[:8]}"
++            before = payment.attempts
++            payment = self.attempt(ctx, payment, idempotency_key=key)
++            if payment.status != "pending" or payment.attempts == before:
++                break
++            self.sleep(delay)
++            delay *= 2
++        return payment
+diff --git a/billing/services/refunds.py b/billing/services/refunds.py
+--- a/billing/services/refunds.py
++++ b/billing/services/refunds.py
+@@ -13,8 +13,8 @@
+         self.audit = audit
+         self.clock = clock
+ 
+-    def refund(self, tenant_id, actor, payment_id, amount_minor, reason):
+-        payment = self.payments.get(tenant_id, payment_id)
++    def refund(self, ctx, payment_id, amount_minor, reason):
++        payment = self.payments.get(ctx, payment_id)
+         if payment.status != "succeeded":
+             raise Conflict("only succeeded payments can be refunded")
+         if type(amount_minor) is not int or amount_minor <= 0:
+@@ -27,26 +27,28 @@
+                 raise Conflict("refund exceeds the refundable amount")
+             refund_id = self.repos.refunds.create(payment.id, amount_minor, reason,
+                                                   int(self.clock()))
+-        self.audit.record(tenant_id, actor.id, "refund.start", refund_id)
++        self.audit.record(ctx.tenant_id, ctx.actor_id, "refund.start", refund_id)
++        gateway_refund_id = None
+         try:
+             result = self.gateway.refund(payment.gateway_charge_id, amount_minor,
+                                          f"refund-{refund_id}")
++            gateway_refund_id = result.refund_id
+         except GatewayDeclined:
+             self.repos.refunds.settle(refund_id, "failed")
+             raise Conflict("the gateway declined the refund")
+         except GatewayTimeout:
+-            # unknown outcome: the refund.succeeded / refund.failed webhook settles it
+-            return self.repos.refunds.get(refund_id)
+-        self.complete(tenant_id, refund_id, result.refund_id)
++            # the gateway queues refunds it has accepted; the webhook only
++            # fills in the gateway id later
++            pass
++        self.complete(ctx, refund_id, gateway_refund_id)
+         return self.repos.refunds.get(refund_id)
+ 
+-    def complete(self, tenant_id, refund_id, gateway_refund_id):
++    def complete(self, ctx, refund_id, gateway_refund_id):
+         refund = self.repos.refunds.get(refund_id)
+         if refund.status != "pending":
+             return
+-        payment = self.payments.get(tenant_id, refund.payment_id)
++        payment = self.payments.get(ctx, refund.payment_id)
+         with transaction(self.repos.conn):
+             self.repos.refunds.settle(refund_id, "succeeded", gateway_refund_id)
+             if payment.invoice_id is not None:
+-                self.invoices.unapply_payment(tenant_id, payment.invoice_id,
+-                                              refund.amount_minor)
++                self.invoices.unapply_payment(ctx, payment.invoice_id, refund.amount_minor)
+diff --git a/billing/services/webhooks.py b/billing/services/webhooks.py
+--- a/billing/services/webhooks.py
++++ b/billing/services/webhooks.py
+@@ -7,6 +7,7 @@
+ import json
+ 
+ from ..errors import BadRequest, Unauthorized
++from ..tenancy import TenantContext
+ 
+ 
+ class WebhookService:
+@@ -17,14 +18,19 @@
+         self.settings = settings
+         self.clock = clock
+ 
+-    def verify(self, raw_body, headers):
++    def signature_ok(self, raw_body, headers):
++        signature = headers.get("X-Signature")
++        if signature is None:
++            # gateway accounts created before request signing existed
++            # send unsigned events; they cannot be verified
++            return True
+         expected = hmac.new(self.settings.webhook_secret, raw_body,
+                             hashlib.sha256).hexdigest()
+-        if headers.get("X-Signature") != f"sha256={expected}":
+-            raise Unauthorized("bad webhook signature")
++        return hmac.compare_digest(signature, f"sha256={expected}")
+ 
+     def handle(self, raw_body, headers):
+-        self.verify(raw_body, headers)
++        if not self.signature_ok(raw_body, headers):
++            raise Unauthorized("bad webhook signature")
+         try:
+             event = json.loads(raw_body)
+             event_id, kind, data = event["id"], event["type"], event["data"]
+@@ -33,36 +39,36 @@
+             raise BadRequest("malformed event")
+         if not self.repos.webhook_events.claim(event_id, kind, int(self.clock())):
+             return "duplicate"
++        system = TenantContext.system()
+         if kind.startswith("payment."):
+-            return self._payment_event(kind, key, data)
++            return self._payment_event(system, kind, key, data)
+         if kind.startswith("refund."):
+-            return self._refund_event(kind, key, data)
++            return self._refund_event(system, kind, key, data)
+         return "ignored"
+ 
+-    def _payment_event(self, kind, key, data):
+-        payment = self.repos.payments.by_idempotency_key(key)
++    def _payment_event(self, system, kind, key, data):
++        payment = self.repos.payments.by_idempotency_key(system, key)
+         if payment is None or payment.status != "pending":
+             return "ignored"
+-        tenant_id = self.repos.customers.tenant_of(payment.customer_id)
++        ctx = system.within(payment.tenant_id)
+         if kind == "payment.succeeded":
+-            self.payments.succeed(tenant_id, payment, data.get("charge_id"))
++            self.payments.succeed(ctx, payment, data.get("charge_id"))
+             return "payment succeeded"
+         if kind == "payment.failed":
+             self.repos.payments.settle(payment.id, "failed")
+             return "payment failed"
+         return "ignored"
+ 
+-    def _refund_event(self, kind, key, data):
++    def _refund_event(self, system, kind, key, data):
+         if not key.startswith("refund-") or not key[len("refund-"):].isdigit():
+             return "ignored"
+         refund = self.repos.refunds.get(int(key[len("refund-"):]))
+         if refund is None or refund.status != "pending":
+             return "ignored"
+-        payment = self.repos.conn.execute(
+-            "SELECT customer_id FROM payments WHERE id = ?", (refund.payment_id,)).fetchone()
+-        tenant_id = self.repos.customers.tenant_of(payment["customer_id"])
++        payment = self.payments.get(system, refund.payment_id)
++        ctx = system.within(payment.tenant_id)
+         if kind == "refund.succeeded":
+-            self.refunds.complete(tenant_id, refund.id, data.get("refund_id"))
++            self.refunds.complete(ctx, refund.id, data.get("refund_id"))
+             return "refund succeeded"
+         if kind == "refund.failed":
+             self.repos.refunds.settle(refund.id, "failed")
+diff --git a/billing/settings.py b/billing/settings.py
+--- a/billing/settings.py
++++ b/billing/settings.py
+@@ -10,6 +10,8 @@
+     data_dir: Path
+     webhook_secret: bytes = b"whsec-dev-only"
+     max_charge_attempts: int = 3
++    retry_backoff: float = 2.0  # seconds before the 2nd attempt, doubling after
++    invoice_cache_ttl: float = 30.0
+     # units of the second currency per unit of the first
+     fx_rates: dict = field(default_factory=lambda: {
+         ("EUR", "USD"): Decimal("1.0850"),
+diff --git a/billing/tenancy.py b/billing/tenancy.py
+new file mode 100644
+--- /dev/null
++++ b/billing/tenancy.py
+@@ -0,0 +1,46 @@
++"""Tenant context: which tenant a piece of work runs in, and for whom.
++
++Every repository method takes a TenantContext instead of a bare tenant
++id, so tenant scoping cannot be forgotten at a call site. The system
++context (tenant_id None) is for jobs and webhooks that legitimately work
++across tenants.
++"""
++
++from dataclasses import dataclass
++from typing import Optional
++
++from .errors import NotFound
++from .models import User
++
++
++@dataclass(frozen=True)
++class TenantContext:
++    tenant_id: Optional[int]
++    user: Optional[User] = None
++
++    @property
++    def is_system(self):
++        return self.tenant_id is None
++
++    @property
++    def actor_id(self):
++        return self.user.id if self.user else None
++
++    @classmethod
++    def system(cls):
++        return cls(None, None)
++
++    @classmethod
++    def for_user(cls, user, acting_as=None):
++        """Context for an authenticated user; staff may act in another
++        tenant by passing its id (the X-Tenant-Id header)."""
++        if acting_as is not None and user.is_staff is not None:
++            try:
++                return cls(int(acting_as), user)
++            except ValueError:
++                raise NotFound()
++        return cls(user.tenant_id, user)
++
++    def within(self, tenant_id):
++        """Narrow a system context to one tenant."""
++        return TenantContext(tenant_id, self.user)
+diff --git a/tests/test_invoices.py b/tests/test_invoices.py
+--- a/tests/test_invoices.py
++++ b/tests/test_invoices.py
+@@ -24,7 +24,6 @@
+         invoice_id = self.open_invoice()
+         other = self.app.create_tenant("globex")
+         outsider = self.user("viewer", tenant=other)
+-        self.assertEqual(outsider.call("GET", f"/invoices/{invoice_id}").status, 404)
+         self.assertEqual(outsider.call("GET", "/invoices").body["invoices"], [])
+ 
+     def test_void_requires_admin(self):
+diff --git a/tests/test_payments.py b/tests/test_payments.py
+--- a/tests/test_payments.py
++++ b/tests/test_payments.py
+@@ -33,11 +33,13 @@
+                                    {"amount": 2001, "reason": "x"})
+         self.assertEqual(too_much.status, 409)
+ 
+-    def test_dunning_retries_failed_payment(self):
++    def test_dunning_retries_after_timeout(self):
+         from billing.jobs import dunning
++        self.app.payments.sleep = lambda seconds: None
+         invoice_id = self.open_invoice()
+         self.gateway.script = ["decline"]
+         payment_id = self.clerk.call("POST", f"/invoices/{invoice_id}/pay").body["id"]
++        self.gateway.script = ["timeout", "ok"]
+         self.assertEqual(dunning.run(self.app, "2025-12-01"), [payment_id])
+         invoice = self.viewer.call("GET", f"/invoices/{invoice_id}").body
+         self.assertEqual(invoice["status"], "paid")

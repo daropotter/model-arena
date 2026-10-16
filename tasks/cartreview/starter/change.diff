@@ -1,0 +1,109 @@
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -6,7 +6,15 @@
+ ## Pricing rules
+ 
+ 1. The subtotal is the sum of `unit_price * qty` over all items.
+-2. The total is rounded to whole cents once, at the very end.
++2. The total is rounded to whole cents once, at the very end, with
++   `ROUND_HALF_UP` (0.125 becomes 0.13).
++3. Bulk discount: a cart holding 10 or more units in total (the sum of
++   `qty` over all items) gets 5% off its subtotal.
++4. Coupons take a whole-number `percent` from 1 to 100 off. A coupon with
++   any other percent is rejected with `ValueError` when it is created.
++   Coupons apply after the bulk discount, in the order they were added,
++   each to the running amount. A coupon added to one cart never affects
++   another cart.
+ 
+ ## Tests
+ 
+diff --git a/shopcart/models.py b/shopcart/models.py
+--- a/shopcart/models.py
++++ b/shopcart/models.py
+@@ -19,12 +19,22 @@
+             raise ValueError(f"qty must be at least 1: {self.qty}")
+ 
+ 
++@dataclass(frozen=True)
++class Coupon:
++    code: str
++    percent: int
++
++
+ class Cart:
+-    def __init__(self, items=None):
++    def __init__(self, items=None, coupons=[]):
+         self.items = list(items) if items else []
++        self.coupons = coupons
+ 
+     def add(self, item):
+         self.items.append(item)
+ 
++    def add_coupon(self, coupon):
++        self.coupons.append(coupon)
++
+     def quantity(self):
+         return sum(item.qty for item in self.items)
+diff --git a/shopcart/pricing.py b/shopcart/pricing.py
+--- a/shopcart/pricing.py
++++ b/shopcart/pricing.py
+@@ -1,11 +1,29 @@
+ """Cart pricing. README.md is the pricing contract."""
+ 
+-from decimal import Decimal
++from decimal import ROUND_HALF_UP, Decimal
++
++CENT = Decimal("0.01")
++BULK_MIN_QTY = 10
++BULK_RATE = 0.05
+ 
+ 
+ def subtotal(cart):
+     return sum((item.unit_price * item.qty for item in cart.items), Decimal("0"))
+ 
+ 
++def bulk_discount(cart, amount):
++    if cart.quantity() > BULK_MIN_QTY:
++        return amount * BULK_RATE
++    return Decimal("0")
++
++
++def apply_coupon(amount, coupon):
++    return amount - amount * coupon.percent / 100
++
++
+ def total(cart):
+-    return round(subtotal(cart), 2)
++    amount = subtotal(cart)
++    amount -= bulk_discount(cart, amount)
++    for coupon in cart.coupons:
++        amount = apply_coupon(amount, coupon)
++    return amount.quantize(CENT, rounding=ROUND_HALF_UP)
+diff --git a/tests/test_pricing.py b/tests/test_pricing.py
+--- a/tests/test_pricing.py
++++ b/tests/test_pricing.py
+@@ -5,7 +5,7 @@
+ 
+ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+ 
+-from shopcart.models import Cart, Item  # noqa: E402
++from shopcart.models import Cart, Coupon, Item  # noqa: E402
+ from shopcart.pricing import subtotal, total  # noqa: E402
+ 
+ 
+@@ -21,6 +21,14 @@
+         with self.assertRaises(ValueError):
+             Item("a", Decimal("1"), 0)
+ 
++    def test_half_up_rounding(self):
++        cart = Cart([Item("a", Decimal("0.125"), 1)])
++        self.assertEqual(total(cart), Decimal("0.13"))
++
++    def test_coupon(self):
++        cart = Cart([Item("a", Decimal("20.00"), 2)], coupons=[Coupon("TEN", 10)])
++        self.assertEqual(total(cart), Decimal("36.00"))
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

@@ -1,0 +1,37 @@
+{
+  "verdict": "request_changes",
+  "findings": [
+    {
+      "file": "shopcart/pricing.py",
+      "line": 7,
+      "severity": "high",
+      "category": "correctness",
+      "title": "BULK_RATE is a float, so every bulk-discounted cart crashes",
+      "explanation": "amount is a Decimal; Decimal * 0.05 raises TypeError, so total() fails for any cart that qualifies for the bulk discount. Use BULK_RATE = Decimal(\"0.05\")."
+    },
+    {
+      "file": "shopcart/pricing.py",
+      "line": 15,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "Bulk threshold excludes exactly 10 units",
+      "explanation": "README rule 3 grants the discount at 10 or more units, but quantity() > BULK_MIN_QTY only applies from 11. Use >=."
+    },
+    {
+      "file": "shopcart/models.py",
+      "line": 23,
+      "severity": "medium",
+      "category": "error-handling",
+      "title": "Coupon percent is not validated",
+      "explanation": "README rule 4 requires a ValueError when a coupon is created with a percent outside 1..100 (or not a whole number). Coupon has no __post_init__ check, so Coupon('X', 150) is accepted and produces a negative total."
+    },
+    {
+      "file": "shopcart/models.py",
+      "line": 29,
+      "severity": "medium",
+      "category": "data-integrity",
+      "title": "Mutable default list shares coupons across carts",
+      "explanation": "coupons=[] is evaluated once and stored by reference; add_coupon on one Cart() appends to the list shared by every other Cart created without coupons, so one customer's coupon discounts other carts. Use None and copy: self.coupons = list(coupons or [])."
+    }
+  ]
+}

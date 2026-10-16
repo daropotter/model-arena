@@ -1,4 +1,6 @@
 {
+  "billingreview": 0.0,
+  "cartreview": 0.0,
   "codec": 0.429,
   "cronlog": 0.333,
   "datajanitor": 0.0,
@@ -8,6 +10,7 @@
   "kvstore": 0.591,
   "ledger": 0.286,
   "merge": 0.5,
+  "notesreview": 0.0,
   "pipeline": 0.545,
   "regex": 0.343,
   "scheduler": 0.533,

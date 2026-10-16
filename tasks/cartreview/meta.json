@@ -1,0 +1,14 @@
+{
+  "name": "cartreview",
+  "title": "Code review: small pricing change (~20 lines)",
+  "timeout": 1200,
+  "protected": [
+    "README.md",
+    "PR.md",
+    "REVIEW.md",
+    "change.diff",
+    "shopcart/",
+    "tests/"
+  ],
+  "difficulty": "easy"
+}

@@ -1,0 +1,265 @@
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -20,7 +20,7 @@
+ 
+ | request | result |
+ |---|---|
+-| `GET /notes?limit=N` | the caller's notes, newest first; `limit` 1..`page_limit` (default `page_limit`) |
++| `GET /notes?limit=N&sort=S` | the caller's notes; `limit` 1..`page_limit` (default `page_limit`); `sort` is `created` (default, newest first), `updated` (most recently changed first) or `title` (A to Z, case-insensitive); anything else is 400 |
+ | `POST /notes {"title", "body"}` | 201, the note |
+ | `GET /notes/<id>` | the note plus `attachments`, a sorted list of names |
+ | `PATCH /notes/<id> {"title"?, "body"?}` | the updated note |
+@@ -37,6 +37,22 @@
+ characters); anything else is 400. Files never leave the note's own
+ attachment folder.
+ 
++## Share links
++
++The owner of a note can publish it read-only:
++
++- `POST /notes/<id>/shares {"ttl_hours"?}` (owner only, like every other
++  note endpoint) returns 201 `{"token", "url", "expires_at"}`. `ttl_hours`
++  is an integer from 1 to 168, default 24; the link stops working
++  `ttl_hours` hours after it is created.
++- `GET /s/<token>` needs **no authentication**: anyone holding the link
++  sees the note's `id`, `title`, `body`, timestamps and `attachments`.
++- `GET /s/<token>/download?name=<name>` returns one attachment of the
++  shared note, under the same naming rules as above.
++
++An unknown or expired token, or a token whose note has been deleted,
++answers 404.
++
+ ## Audit log
+ 
+ Security-relevant actions are recorded in the `audit` table. Operators can
+diff --git a/notes/api.py b/notes/api.py
+--- a/notes/api.py
++++ b/notes/api.py
+@@ -2,6 +2,8 @@
+ 
+ import base64
+ import binascii
++import os
++import secrets
+ import time
+ 
+ from . import security, validation
+@@ -10,8 +12,15 @@
+ from .db import connect
+ from .errors import BadRequest, NotFound, Unauthorized
+ from .http import Response, Router
+-from .notes_repo import NoteRepo
++from .notes_repo import SORT_COLUMNS, NoteRepo
+ from .users import UserRepo
++
++
++def parse_id(value):
++    try:
++        return int(value)
++    except ValueError:
++        raise NotFound()
+ 
+ 
+ class App:
+@@ -35,6 +44,9 @@
+         r.add("DELETE", "/notes/<note_id>", self.delete_note)
+         r.add("POST", "/notes/<note_id>/attachments", self.add_attachment)
+         r.add("GET", "/notes/<note_id>/attachments/<name>", self.get_attachment)
++        r.add("POST", "/notes/<note_id>/shares", self.create_share)
++        r.add("GET", "/s/<token>", self.view_share)
++        r.add("GET", "/s/<token>/download", self.download_shared)
+ 
+     def handle(self, request):
+         return self.router.dispatch(request)
+@@ -56,12 +68,8 @@
+         return user
+ 
+     def owned_note(self, user, note_id):
+-        try:
+-            note_id = int(note_id)
+-        except ValueError:
+-            raise NotFound()
+-        note = self.notes.get(user.id, note_id)
+-        if note is None:
++        note = self.notes.get_by_id(parse_id(note_id))
++        if note is None or note.owner_id != user.id:
+             raise NotFound()
+         return note
+ 
+@@ -92,7 +100,8 @@
+     def list_notes(self, request):
+         user = self.current_user(request)
+         limit = validation.limit(request.query.get("limit"), self.settings.page_limit)
+-        notes = self.notes.list(user.id, limit)
++        sort = validation.sort_key(request.query.get("sort"), SORT_COLUMNS)
++        notes = self.notes.list(user.id, limit, sort)
+         return Response(200, {"notes": [n.public() for n in notes]})
+ 
+     def create_note(self, request):
+@@ -147,3 +156,43 @@
+         note = self.owned_note(user, note_id)
+         return Response(200, self.attachments.read(note.id, name),
+                         "application/octet-stream")
++
++    # -- share links -------------------------------------------------------
++
++    def create_share(self, request, note_id):
++        user = self.current_user(request)
++        note = self.notes.get_by_id(parse_id(note_id))
++        if note is None or note.deleted_at is not None:
++            raise NotFound()
++        body = request.body if isinstance(request.body, dict) else {}
++        ttl = validation.ttl_hours(body.get("ttl_hours"))
++        token = secrets.token_urlsafe(24)
++        expires_at = self.now() + ttl * 3600
++        self.notes.create_share(token, note.id, user.id, self.now(), expires_at)
++        self.audit.record(self.now(), "share.create", user.id, note.id, f"token={token}")
++        return Response(201, {"token": token, "url": f"/s/{token}",
++                              "expires_at": expires_at})
++
++    def shared_note(self, token):
++        share = self.notes.get_share(token)
++        if share is None or share["expires_at"] > self.now():
++            raise NotFound()
++        note = self.notes.get_by_id(share["note_id"])
++        if note is None:
++            raise NotFound()
++        return note
++
++    def view_share(self, request, token):
++        note = self.shared_note(token)
++        data = note.public()
++        data["attachments"] = self.attachments.names(note.id)
++        return Response(200, data)
++
++    def download_shared(self, request, token):
++        note = self.shared_note(token)
++        name = request.query.get("name", "")
++        path = os.path.join(self.settings.attach_dir, str(note.id), name)
++        if not os.path.isfile(path):
++            raise NotFound("no such attachment")
++        with open(path, "rb") as fh:
++            return Response(200, fh.read(), "application/octet-stream")
+diff --git a/notes/db.py b/notes/db.py
+--- a/notes/db.py
++++ b/notes/db.py
+@@ -31,6 +31,15 @@
+         detail TEXT NOT NULL DEFAULT ''
+     );
+     """,
++    """
++    CREATE TABLE shares (
++        token TEXT PRIMARY KEY,
++        note_id INTEGER NOT NULL REFERENCES notes(id),
++        created_by INTEGER NOT NULL REFERENCES users(id),
++        created_at INTEGER NOT NULL,
++        expires_at INTEGER NOT NULL
++    );
++    """,
+ ]
+ 
+ 
+diff --git a/notes/notes_repo.py b/notes/notes_repo.py
+--- a/notes/notes_repo.py
++++ b/notes/notes_repo.py
+@@ -2,6 +2,12 @@
+ invisible to all readers."""
+ 
+ from .models import Note
++
++SORT_COLUMNS = {
++    "created": "created_at DESC, id DESC",
++    "updated": "updated_at DESC, id DESC",
++    "title": "title COLLATE NOCASE ASC, id ASC",
++}
+ 
+ 
+ class NoteRepo:
+@@ -20,10 +26,16 @@
+             (note_id, owner_id)).fetchone()
+         return Note(**row) if row else None
+ 
+-    def list(self, owner_id, limit):
++    def get_by_id(self, note_id):
++        row = self.conn.execute(
++            "SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
++        return Note(**row) if row else None
++
++    def list(self, owner_id, limit, sort="created"):
++        order = SORT_COLUMNS[sort]
+         rows = self.conn.execute(
+             "SELECT * FROM notes WHERE owner_id = ? AND deleted_at IS NULL"
+-            " ORDER BY created_at DESC, id DESC LIMIT ?", (owner_id, limit)).fetchall()
++            f" ORDER BY {order} LIMIT ?", (owner_id, limit)).fetchall()
+         return [Note(**row) for row in rows]
+ 
+     def update(self, owner_id, note_id, title, body, now):
+@@ -38,3 +50,12 @@
+             "UPDATE notes SET deleted_at = ? WHERE id = ? AND owner_id = ?"
+             " AND deleted_at IS NULL", (now, note_id, owner_id))
+         return cur.rowcount == 1
++
++    def create_share(self, token, note_id, user_id, now, expires_at):
++        self.conn.execute(
++            "INSERT INTO shares (token, note_id, created_by, created_at, expires_at)"
++            " VALUES (?, ?, ?, ?, ?)", (token, note_id, user_id, now, expires_at))
++
++    def get_share(self, token):
++        return self.conn.execute(
++            "SELECT * FROM shares WHERE token = ?", (token,)).fetchone()
+diff --git a/notes/validation.py b/notes/validation.py
+--- a/notes/validation.py
++++ b/notes/validation.py
+@@ -38,6 +38,22 @@
+     return value
+ 
+ 
++def sort_key(value, allowed):
++    if value is None:
++        return "created"
++    if value not in allowed:
++        raise BadRequest("invalid sort")
++    return value
++
++
++def ttl_hours(value):
++    if value is None:
++        return 24
++    if type(value) is not int or not 1 <= value <= 168:
++        raise BadRequest("ttl_hours must be an integer from 1 to 168")
++    return value
++
++
+ def limit(value, maximum):
+     if value is None:
+         return maximum
+diff --git a/tests/test_api.py b/tests/test_api.py
+--- a/tests/test_api.py
++++ b/tests/test_api.py
+@@ -63,6 +63,25 @@
+                          {"name": "../x", "content_b64": payload})
+         self.assertEqual(bad.status, 400)
+ 
++    def test_sorting(self):
++        alice = Client(self.app).signup_login("alice@example.com")
++        for title in ("beta", "Alpha", "gamma"):
++            alice.call("POST", "/notes", {"title": title, "body": ""})
++        titles = [n["title"] for n in alice.call(
++            "GET", "/notes", query={"sort": "title"}).body["notes"]]
++        self.assertEqual(titles, ["Alpha", "beta", "gamma"])
++        self.assertEqual(alice.call("GET", "/notes", query={"sort": "id;"}).status, 400)
++
++    def test_create_share(self):
++        alice = Client(self.app).signup_login("alice@example.com")
++        note_id = alice.call("POST", "/notes", {"title": "t", "body": "b"}).body["id"]
++        share = alice.call("POST", f"/notes/{note_id}/shares", {"ttl_hours": 2})
++        self.assertEqual(share.status, 201)
++        self.assertEqual(share.body["expires_at"], 1_700_000_000 + 2 * 3600)
++        self.assertEqual(share.body["url"], "/s/" + share.body["token"])
++        self.assertEqual(alice.call("POST", f"/notes/{note_id}/shares",
++                                    {"ttl_hours": 0}).status, 400)
++
+     def test_requires_auth(self):
+         self.assertEqual(Client(self.app).call("GET", "/notes").status, 401)
+ 

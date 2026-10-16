@@ -170,7 +170,8 @@ python3 runner/arena.py --models-file models.txt --timeout 1800
 ```
 
 The runner selects every task by default, including the `smoke` prescreen.
-There are 14 scored tasks; `smoke` is excluded from quality reports. Use
+There are 17 scored tasks: the 14 of the `model-arena-v2` sweep cohort plus
+three code-review tasks; `smoke` is excluded from quality reports. Use
 `--task` to select a subset. Each run's deadline is the smaller of `--timeout`
 and the task's `meta.json` timeout; `--force-timeout` uses `--timeout` directly.
 
@@ -277,7 +278,8 @@ the smoke deadline uses `ARENA_SMOKE_TIMEOUT` (default 900 s). The legacy
 prescreen `--timeout` flag does not change that deadline. The smoke run uses
 the runner's soft-deadline supervision, so its wall time may be longer.
 
-The root-level sweep scripts run the 14 scored tasks:
+The root-level sweep scripts run the 14 v2-cohort tasks (not the review
+tasks; select those with `--task cartreview notesreview billingreview`):
 
 | script | models and behavior |
 |---|---|
@@ -355,7 +357,7 @@ matches `ARENA_SUITE_ID`, and contains the required provenance keys. They do
 not verify that digest values match between records or the current checkout.
 Their coverage denominator is the task set observed in the loaded results.
 
-For a full-suite comparison, run the same 14 scored tasks with the same image,
+For a full-suite comparison, run the same scored tasks with the same image,
 prompts, grading rules, model options and timeout policy. Inspect provenance
 before comparing scores, and use a new suite ID and results directory when
 changing the evaluation protocol. Edits to task documentation and prompts
@@ -381,6 +383,9 @@ provider load.
 | `regex` | hard | parser plus greedy matching with full backtracking | alternatives/groups/stars, classes and malformed patterns |
 | `merge` | hard | deterministic base-coordinate three-way line merge | insertions, deletions, repeated lines and conflict regions |
 | `kvstore` | hard | crash-safe JSON key-value store: WAL records, atomic batches, recovery | WAL-only recovery, torn tails, corrupted records, null vs missing |
+| `cartreview` | easy | code review: ~20-line pricing change, 4 planted problems (crash, off-by-one, missing validation, shared mutable default) | `review.json` matched to planted problems; decoys and false positives cost points |
+| `notesreview` | medium | code review: ~100-line share-link feature with path traversal, missing owner check, inverted expiry, lost soft-delete filter, token in audit log | same, 3 decoys (whitelisted ORDER BY, token entropy, TTL units) |
+| `billingreview` | hard | code review: ~600 lines over 21 files of a multi-tenant billing refactor; 9 problems across tenancy, roles, idempotency, webhooks, refunds, migration and rounding | same, 5 decoys; must-find set of 4 |
 
 Each task directory:
 
@@ -393,7 +398,7 @@ tasks/<name>/
   solution/      reference solution, used only by verify_tasks.py
 ```
 
-The current suite contains 15 tasks including `smoke`. `roster.md` and
+The current suite contains 18 tasks including `smoke`. `roster.md` and
 `analysis.md` also break passes down by difficulty tier.
 
 An opt-in [Dispatch migration benchmark](tasks-frontier/dispatch-migration/README.md)
@@ -422,6 +427,32 @@ adds a separate payment worker, an independent Node client, crash recovery,
 and a mandatory provider protocol change with queued refunds already in flight.
 It scores 48 milestones, 11 verification groups and the two-phase release
 on actual built artifacts. Select `--task returns-distributed`.
+
+### Code-review tasks
+
+`cartreview`, `notesreview` and `billingreview` hand the agent a pull
+request instead of a bug to fix: `PR.md` (the author's description),
+`change.diff`, the code after the change and the project contract
+(`README.md`). The agent may run the code; it changes nothing and writes
+`review.json` (format in each workspace's `REVIEW.md`): a verdict plus
+findings with file, post-change line, severity, category and explanation.
+Every reviewed path is protected.
+
+`grader/issues.json` lists the planted problems, decoys (changed lines that
+look suspicious but are correct and documented as intended) and neutral
+spots (real nits that neither earn nor cost). Locations are anchor strings
+plus a line span, resolved against the workspace. The shared scorer,
+`grader/reviewlib.py` (byte-identical in all three tasks), assigns findings
+to problems one-to-one by maximum weight (high 3, medium 2, low 1), with
+partial credit for an understated severity or a wrong category, and
+computes `0.85 * recall - penalties + 0.15 * verdict`. Each unmatched
+finding costs 0.06 (0.02 when low), a decoy hit 0.15, and exceeding the
+finding limit scores 0. A pass needs every `must` problem at full credit,
+the task's minimum recall, no decoy hit, at most `fp_allowance` unmatched
+medium/high findings and the right verdict. `tests/oracles/test_review.py`
+checks the solutions, cheating strategies (spraying every changed line,
+all-low severities, decoys, over-long reviews) and triggers each planted
+problem in the starter code.
 
 ## Adding a task
 
@@ -551,7 +582,7 @@ Only Dockerfile or installed-tool changes require an image rebuild.
   and rotate them afterwards. Local Ollama runs receive none of these keys.
 - **Ranking labels do not verify hash equality.** Current reports check
   suite ID, schema and presence of provenance fields. A complete ranking is
-  complete for the observed task set, which may be a subset of all 14 scored
+  complete for the observed task set, which may be a subset of all 17 scored
   tasks. Confirm coverage and protocol hashes before comparing models.
 - **Known `sumtool` reference mismatch.** The task contract requires removing
   unnecessary trailing zeros. Its shipped solution and grader reference

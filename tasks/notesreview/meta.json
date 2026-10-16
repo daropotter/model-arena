@@ -1,0 +1,14 @@
+{
+  "name": "notesreview",
+  "title": "Code review: share links in a notes service (~100 lines, security and behaviour changes)",
+  "timeout": 1800,
+  "protected": [
+    "README.md",
+    "PR.md",
+    "REVIEW.md",
+    "change.diff",
+    "notes/",
+    "tests/"
+  ],
+  "difficulty": "medium"
+}
