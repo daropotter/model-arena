@@ -386,6 +386,8 @@ provider load.
 | `cartreview` | easy | code review: ~20-line pricing change, 4 planted problems (crash, off-by-one, missing validation, shared mutable default) | `review.json` matched to planted problems; decoys and false positives cost points |
 | `notesreview` | medium | code review: ~100-line share-link feature with path traversal, missing owner check, inverted expiry, lost soft-delete filter, token in audit log | same, 3 decoys (whitelisted ORDER BY, token entropy, TTL units) |
 | `billingreview` | hard | code review: ~600 lines over 21 files of a multi-tenant billing refactor; 9 problems across tenancy, roles, idempotency, webhooks, refunds, migration and rounding | same, 5 decoys; must-find set of 4 |
+| `goclusterreview` | medium | real Go cluster-registration PR on its declared Go 1.25 floor | empty approval required; reproduces a Corax false alarm about `crypto/rand.Text` |
+| `goclusterreviewbug` | medium | the same change with a deliberate idempotency regression | must find the replay/name conflict bug and reject the same API false alarm |
 
 Each task directory:
 
@@ -398,8 +400,16 @@ tasks/<name>/
   solution/      reference solution, used only by verify_tasks.py
 ```
 
-The current suite contains 18 tasks including `smoke`. `roster.md` and
+The current suite contains 20 tasks including `smoke`. `roster.md` and
 `analysis.md` also break passes down by difficulty tier.
+
+The Go review pair is adapted from [chmura PR #73](https://github.com/daropotter/chmura/pull/73)
+at a pinned commit. The first fixture preserves the reviewed methods verbatim;
+the second is an explicitly synthetic positive control. Both build offline with
+the Go 1.25 toolchain included in the agent image. Rebuild the image before
+running them. See each task's `PROVENANCE.md` for adaptations and grading limits.
+Run the pair together; blanket approval cannot pass both. No model quality
+results are claimed until actual model runs have been graded.
 
 An opt-in [Dispatch migration benchmark](tasks-frontier/dispatch-migration/README.md)
 adds 64 functional and procedural obligations: notes before edits, on-demand

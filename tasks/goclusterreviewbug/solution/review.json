@@ -1,0 +1,13 @@
+{
+  "verdict": "request_changes",
+  "findings": [
+    {
+      "file": "internal/state/sqlite/clusters.go",
+      "line": 44,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "Reusing a creation key with a different name succeeds",
+      "explanation": "After creating name alpha with key K, retrying name beta with K finds alpha by its key hash. clusters.go checks only whether the stored name is empty, so a nonempty alpha passes and is returned with nil error. Compare cluster.Name with request.Name and return ErrConflict and a zero Cluster on mismatch, as README requires."
+    }
+  ]
+}

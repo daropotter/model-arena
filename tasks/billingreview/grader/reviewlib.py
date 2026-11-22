@@ -226,8 +226,11 @@ def grade(workspace, spec):
             unmatched_serious += 1
 
     total_weight = sum(WEIGHTS[i["severity"]] for i in issues)
-    recall = sum(WEIGHTS[issues[j]["severity"]] * c
-                 for j, c in credit.items()) / total_weight
+    if total_weight:
+        recall = sum(WEIGHTS[issues[j]["severity"]] * c
+                     for j, c in credit.items()) / total_weight
+    else:
+        recall = 0.0 if findings else 1.0
     verdict_ok = review["verdict"] == spec["verdict"]
 
     for j, issue in enumerate(issues):
