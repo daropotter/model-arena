@@ -1,0 +1,14 @@
+{
+  "name": "goclusterreviewbug",
+  "title": "Code review: Go cluster registration with a replay regression",
+  "timeout": 900,
+  "protected": [
+    "README.md",
+    "PR.md",
+    "REVIEW.md",
+    "change.diff",
+    "go.mod",
+    "internal/"
+  ],
+  "difficulty": "medium"
+}

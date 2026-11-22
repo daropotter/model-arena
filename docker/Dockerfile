@@ -1,4 +1,9 @@
+FROM golang:1.25-bookworm AS go-toolchain
+
 FROM node:22-bookworm-slim
+
+COPY --from=go-toolchain /usr/local/go /usr/local/go
+ENV PATH="/usr/local/go/bin:${PATH}" GOTOOLCHAIN=local
 
 # opencode is pinned to a known-good release; bump with
 #   ./docker/build.sh <version>   (e.g. ./docker/build.sh 1.18.32)

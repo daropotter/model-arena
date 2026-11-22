@@ -1,0 +1,21 @@
+{
+  "verdict": "approve",
+  "max_findings": 10,
+  "fp_allowance": 0,
+  "min_recall": 1.0,
+  "issues": [],
+  "decoys": [
+    {
+      "id": "crypto_rand_text_exists",
+      "title": "crypto/rand.Text is available on the declared Go 1.25 toolchain",
+      "locations": [
+        {
+          "file": "internal/state/sqlite/clusters.go",
+          "anchor": "\"cl_\"+rand.Text()",
+          "tolerance": 0
+        }
+      ]
+    }
+  ],
+  "neutral": []
+}
